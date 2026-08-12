@@ -5,7 +5,7 @@ mutagen==1.47.0
 pytest==9.1.1
 httpx==0.28.1
 httpx2==2.10.0
-numpy==2.2.1
+numpy==2.5.1
 soundfile==0.12.1
 pydub==0.25.1
 yt-dlp==2026.7.4
