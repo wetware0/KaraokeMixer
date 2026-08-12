@@ -1,0 +1,13 @@
+fastapi==0.141.1
+starlette==1.6.0
+uvicorn[standard]==0.34.0
+mutagen==1.47.0
+pytest==9.1.1
+httpx==0.28.1
+httpx2==2.10.0
+numpy==2.2.1
+soundfile==0.12.1
+pydub==0.25.1
+yt-dlp==2026.7.4
+yt-dlp-ejs==0.8.0
+Send2Trash==2.1.0

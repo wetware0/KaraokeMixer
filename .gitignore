@@ -1,0 +1,29 @@
+# Local test media (copied sample library) — never committed
+sample/
+
+# Brainstorming companion artifacts
+.superpowers/
+
+# Python
+.venv*/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / frontend
+node_modules/
+dist/
+
+# App data
+*.sqlite
+*.sqlite3
+
+# Secrets / local environment overrides
+.env
+.env.*
+
+# Installer/runtime state is stored outside the repository, but ignore a
+# copied PID/log directory if a user deliberately overrides it into the tree.
+.karaoke-media-manager/
