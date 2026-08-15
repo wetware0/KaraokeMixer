@@ -133,7 +133,8 @@ def write_lyric_timing_provenance(lrc_path: Path, provenance: dict) -> dict:
     atomic_publish(
         sidecar,
         # The destination is a fixed sibling produced by _fixed_lrc_sibling.
-        lambda part: part.write_text(encoded, encoding="utf-8", newline=""),  # lgtm[py/path-injection]
+        # codeql[py/path-injection]
+        lambda part: part.write_text(encoded, encoding="utf-8", newline=""),
     )
     return portable
 
@@ -151,7 +152,8 @@ def write_lyric_timing_report(lrc_path: Path, provenance: dict, word_details: li
     atomic_publish(
         lyric_timing_details_path(lrc_path),
         # The destination is a fixed sibling produced by _fixed_lrc_sibling.
-        lambda part: part.write_text(encoded, encoding="utf-8", newline=""),  # lgtm[py/path-injection]
+        # codeql[py/path-injection]
+        lambda part: part.write_text(encoded, encoding="utf-8", newline=""),
     )
     return summary
 

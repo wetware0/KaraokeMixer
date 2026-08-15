@@ -166,12 +166,14 @@ class ImproveLyricsStage:
                     atomic_publish(
                         backup_path,
                         # backup_path is a fixed sibling of the validated LRC.
-                        lambda part: part.write_bytes(initial_lrc_bytes),  # lgtm[py/path-injection]
+                        # codeql[py/path-injection]
+                        lambda part: part.write_bytes(initial_lrc_bytes),
                     )
                 atomic_publish(
                     lrc_path,
                     # lrc_path was normalized and checked against configured roots.
-                    lambda part: part.write_text(improved, encoding="utf-8", newline=""),  # lgtm[py/path-injection]
+                    # codeql[py/path-injection]
+                    lambda part: part.write_text(improved, encoding="utf-8", newline=""),
                 )
             summary = write_lyric_timing_report(lrc_path, {
                 "quality": confidence.quality,
@@ -307,6 +309,9 @@ def _restore_files(captured: dict[Path, bytes | None]) -> None:
     for path, content in captured.items():
         if content is None:
             # Every captured path is derived from the validated canonical LRC.
-            path.unlink(missing_ok=True)  # lgtm[py/path-injection]
+            # codeql[py/path-injection]
+            path.unlink(missing_ok=True)
         else:
+            # Every captured path is derived from the validated canonical LRC.
+            # codeql[py/path-injection]
             atomic_publish(path, lambda part, data=content: part.write_bytes(data))
