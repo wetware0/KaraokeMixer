@@ -1196,6 +1196,39 @@ describe("Library table columns", () => {
     expect(screen.getByLabelText("Filter Stems")).toBeTruthy();
   });
 
+  it("filters directly from headings, combines filters, and clears them together", async () => {
+    const filterTracks: Track[] = [
+      { ...sampleTracks[0], has_artwork: true },
+      {
+        ...sampleTracks[0], id: 2, title: "Bohemian Rhapsody", artist: "Queen", has_artwork: false,
+      },
+      {
+        ...sampleTracks[0], id: 3, title: "Waterloo", artist: "ABBA", has_artwork: false,
+      },
+    ];
+    stubFetchTracks(filterTracks);
+    render(Library);
+    await waitFor(() => expect(screen.getByText("Bohemian Rhapsody")).toBeTruthy());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open Artwork filter" }));
+    await fireEvent.change(screen.getByLabelText("Artwork filter value"), { target: { value: "missing" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(screen.queryByText("Dancing Queen")).toBeNull());
+    expect(screen.getByText("Bohemian Rhapsody")).toBeTruthy();
+    expect(screen.getByText("Waterloo")).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open Artist filter" }));
+    await fireEvent.input(screen.getByLabelText("Artist filter value"), { target: { value: "ABBA" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(screen.queryByText("Bohemian Rhapsody")).toBeNull());
+    expect(screen.getByText("Waterloo")).toBeTruthy();
+    expect(screen.getByText("1 of 3 shown", { exact: false })).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Clear filters (2)" }));
+    await waitFor(() => expect(screen.getByText("Dancing Queen")).toBeTruthy());
+    expect(screen.getByText("Bohemian Rhapsody")).toBeTruthy();
+  });
+
   it("loads a persisted column state on mount", async () => {
     fakeStorage.setItem(
       LIBRARY_COLUMNS_STORAGE_KEY,

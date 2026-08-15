@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     album TEXT,
     year INTEGER,
     duration_seconds REAL,
+    has_artwork INTEGER,
     instrumental_provenance_json TEXT,
     UNIQUE(media_root, relative_path)
 );
@@ -123,6 +124,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         _add_column_if_missing(conn, "tracks", "album", "TEXT")
         _add_column_if_missing(conn, "tracks", "year", "INTEGER")
         _add_column_if_missing(conn, "tracks", "duration_seconds", "REAL")
+        _add_column_if_missing(conn, "tracks", "has_artwork", "INTEGER")
         _add_column_if_missing(conn, "tracks", "instrumental_provenance_json", "TEXT")
     _run_instrumental_provenance_backfill_migration(conn)
     _run_instrumental_provenance_tag_migration(conn)
@@ -338,6 +340,7 @@ def replace_tracks(conn: sqlite3.Connection, media_root: str, tracks: list) -> N
                 track.album,
                 track.year,
                 track.duration_seconds,
+                None if getattr(track, "has_artwork", None) is None else int(track.has_artwork),
                 _instrumental_provenance_for_scan(
                     existing_provenance_by_relative_path.get(track.relative_path), track
                 ),
@@ -350,9 +353,9 @@ def replace_tracks(conn: sqlite3.Connection, media_root: str, tracks: list) -> N
                         media_root, relative_path, absolute_path, artist, title,
                         has_instrumental, has_vocals, has_lead_vocals, has_backing_vocals,
                         has_drums, has_bass, has_guitar, has_piano, has_other, has_lrc,
-                        lrc_state, stem_count, last_scanned_at, album, year, duration_seconds,
+                        lrc_state, stem_count, last_scanned_at, album, year, duration_seconds, has_artwork,
                         instrumental_provenance_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     values,
                 )
@@ -365,6 +368,7 @@ def replace_tracks(conn: sqlite3.Connection, media_root: str, tracks: list) -> N
                         has_instrumental = ?, has_vocals = ?, has_lead_vocals = ?, has_backing_vocals = ?,
                         has_drums = ?, has_bass = ?, has_guitar = ?, has_piano = ?, has_other = ?, has_lrc = ?,
                         lrc_state = ?, stem_count = ?, last_scanned_at = ?, album = ?, year = ?, duration_seconds = ?,
+                        has_artwork = ?,
                         instrumental_provenance_json = ?
                     WHERE id = ?
                     """,
@@ -444,6 +448,7 @@ def upsert_track_scan_batch(
                 track.album,
                 track.year,
                 track.duration_seconds,
+                None if getattr(track, "has_artwork", None) is None else int(track.has_artwork),
                 _instrumental_provenance_for_scan(
                     existing_provenance_by_relative_path.get(track.relative_path), track
                 ),
@@ -456,9 +461,9 @@ def upsert_track_scan_batch(
                         media_root, relative_path, absolute_path, artist, title,
                         has_instrumental, has_vocals, has_lead_vocals, has_backing_vocals,
                         has_drums, has_bass, has_guitar, has_piano, has_other, has_lrc,
-                        lrc_state, stem_count, last_scanned_at, album, year, duration_seconds,
+                        lrc_state, stem_count, last_scanned_at, album, year, duration_seconds, has_artwork,
                         instrumental_provenance_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     values,
                 )
@@ -470,6 +475,7 @@ def upsert_track_scan_batch(
                         has_instrumental = ?, has_vocals = ?, has_lead_vocals = ?, has_backing_vocals = ?,
                         has_drums = ?, has_bass = ?, has_guitar = ?, has_piano = ?, has_other = ?, has_lrc = ?,
                         lrc_state = ?, stem_count = ?, last_scanned_at = ?, album = ?, year = ?, duration_seconds = ?,
+                        has_artwork = ?,
                         instrumental_provenance_json = ?
                     WHERE id = ?
                     """,
@@ -569,6 +575,7 @@ def _row_to_track(row: sqlite3.Row) -> dict:
         "album": row["album"],
         "year": row["year"],
         "duration_seconds": row["duration_seconds"],
+        "has_artwork": None if row["has_artwork"] is None else bool(row["has_artwork"]),
         "instrumental_provenance": provenance,
     }
 
@@ -1093,7 +1100,14 @@ def delete_track_records(conn: sqlite3.Connection, track_ids: list[int]) -> int:
 
 
 def update_track_tags(
-    conn: sqlite3.Connection, track_id: int, *, artist: str | None, title: str, album: str | None, year: int | None
+    conn: sqlite3.Connection,
+    track_id: int,
+    *,
+    artist: str | None,
+    title: str,
+    album: str | None,
+    year: int | None,
+    has_artwork: bool | None = None,
 ) -> dict | None:
     """Targeted single-row update after a tag-editor Save (Task 4's
     PUT .../tags) - deliberately NOT a full filesystem rescan: the file's
@@ -1102,8 +1116,30 @@ def update_track_tags(
     far cheaper than re-walking the whole media root."""
     with _write_lock, conn:
         conn.execute(
-            "UPDATE tracks SET artist = ?, title = ?, album = ?, year = ? WHERE id = ?",
-            (artist, title, album, year, track_id),
+            """
+            UPDATE tracks
+            SET artist = ?, title = ?, album = ?, year = ?,
+                has_artwork = CASE WHEN ? IS NULL THEN has_artwork ELSE ? END
+            WHERE id = ?
+            """,
+            (
+                artist, title, album, year,
+                None if has_artwork is None else int(has_artwork),
+                None if has_artwork is None else int(has_artwork),
+                track_id,
+            ),
+        )
+    return get_track(conn, track_id)
+
+
+def update_track_artwork_state(
+    conn: sqlite3.Connection, track_id: int, has_artwork: bool
+) -> dict | None:
+    """Update the one catalogue field changed by an artwork upload."""
+    with _write_lock, conn:
+        conn.execute(
+            "UPDATE tracks SET has_artwork = ? WHERE id = ?",
+            (int(has_artwork), track_id),
         )
     return get_track(conn, track_id)
 

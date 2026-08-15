@@ -190,7 +190,7 @@ def test_get_connection_is_idempotent_across_calls(tmp_path):
     assert row["n"] == 1
 
 
-def test_get_connection_migrates_album_year_duration_columns_onto_an_existing_db(tmp_path):
+def test_get_connection_migrates_catalogue_metadata_columns_onto_an_existing_db(tmp_path):
     db_path = tmp_path / "library.db"
     conn = get_connection(db_path)
     conn.close()
@@ -222,7 +222,7 @@ def test_get_connection_migrates_album_year_duration_columns_onto_an_existing_db
 
     migrated_conn = get_connection(db_path)
     columns = {row["name"] for row in migrated_conn.execute("PRAGMA table_info(tracks)")}
-    assert {"album", "year", "duration_seconds"}.issubset(columns)
+    assert {"album", "year", "duration_seconds", "has_artwork"}.issubset(columns)
 
 
 def test_replace_tracks_stores_album_year_duration(tmp_path):
@@ -238,6 +238,19 @@ def test_replace_tracks_stores_album_year_duration(tmp_path):
     assert row["album"] == "Arrival"
     assert row["year"] == 1976
     assert row["duration_seconds"] == 213.5
+
+
+def test_replace_tracks_stores_nullable_artwork_presence(tmp_path):
+    conn = get_connection(tmp_path / "library.db")
+    checked = _make_track("D:/Media", "Checked.flac", "ABBA", "Checked")
+    checked.has_artwork = True
+    unchecked = _make_track("D:/Media", "Unchecked.flac", "ABBA", "Unchecked")
+
+    replace_tracks(conn, "D:/Media", [checked, unchecked])
+
+    rows = {row["title"]: row for row in list_tracks(conn)}
+    assert rows["Checked"]["has_artwork"] is True
+    assert rows["Unchecked"]["has_artwork"] is None
 
 
 def test_replace_tracks_preserves_id_and_updates_metadata_for_an_existing_file(tmp_path):
@@ -289,6 +302,18 @@ def test_update_track_tags_updates_and_returns_the_fresh_row(tmp_path):
     assert updated["title"] == "New Title"
     assert updated["album"] == "New Album"
     assert updated["year"] == 2001
+
+
+def test_update_track_tags_can_refresh_artwork_presence(tmp_path):
+    conn = get_connection(tmp_path / "library.db")
+    replace_tracks(conn, "D:/Media", [_make_track("D:/Media", "Song.flac", "ABBA", "Song")])
+    track_id = list_tracks(conn)[0]["id"]
+
+    updated = update_track_tags(
+        conn, track_id, artist="ABBA", title="Song", album=None, year=None, has_artwork=False
+    )
+
+    assert updated["has_artwork"] is False
 
 
 def test_update_track_tags_returns_none_for_an_unknown_track_id(tmp_path):

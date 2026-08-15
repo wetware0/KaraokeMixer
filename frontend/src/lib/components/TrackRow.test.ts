@@ -62,6 +62,13 @@ describe("TrackRow", () => {
     expect(screen.getByLabelText("No artwork for Dancing Queen")).toBeTruthy();
   });
 
+  it("uses the catalogue flag to avoid requesting known-missing artwork", () => {
+    render(TrackRow, { props: { track: track({ has_artwork: false }), columns: defaultColumns() } });
+
+    expect(screen.queryByAltText("Dancing Queen artwork")).toBeNull();
+    expect(screen.getByLabelText("No artwork for Dancing Queen")).toBeTruthy();
+  });
+
   it("retries artwork with a fresh cache key when the track revision changes", async () => {
     const view = render(TrackRow, { props: { track: track(), columns: defaultColumns(), revision: 3 } });
     const image = screen.getByAltText("Dancing Queen artwork") as HTMLImageElement;

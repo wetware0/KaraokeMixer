@@ -33,7 +33,7 @@ export function instrumentalProvenanceTitle(track: Track): string {
 }
 
 export const LIBRARY_COLUMNS_STORAGE_KEY = "karaoke-mm.libraryColumns";
-const LIBRARY_COLUMNS_SCHEMA_VERSION = 4;
+const LIBRARY_COLUMNS_SCHEMA_VERSION = 5;
 export const MIN_LIBRARY_COLUMN_WIDTH = 64;
 export const MAX_LIBRARY_COLUMN_WIDTH = 720;
 
@@ -76,7 +76,7 @@ const DEFAULT_KEY_ORDER: LibraryColumnKey[] = [
   "artwork", "folder", "filename", "artist", "title", "instrumental", "lyrics", "stems", "album", "year", "duration",
 ];
 const DEFAULT_WIDTHS: Record<LibraryColumnKey, number> = {
-  artwork: 78,
+  artwork: 100,
   folder: 240,
   filename: 220,
   artist: 150,
@@ -127,6 +127,7 @@ function sanitize(raw: unknown): LibraryColumnsState {
 
   const candidate = raw as Partial<LibraryColumnsState>;
   const isPreFolderDefaultState = candidate.version === undefined || candidate.version < 2;
+  const isPreHeaderFiltersState = candidate.version === undefined || candidate.version < 5;
   const rawColumns = Array.isArray(candidate.columns) ? candidate.columns : [];
   const byKey = new Map<LibraryColumnKey, LibraryColumnConfig>();
   for (const entry of rawColumns as Array<Partial<LibraryColumnConfig>>) {
@@ -136,7 +137,7 @@ function sanitize(raw: unknown): LibraryColumnsState {
       label: DEFAULT_LABELS[entry.key],
       visible: typeof entry.visible === "boolean" ? entry.visible : entry.key !== "album",
       order: typeof entry.order === "number" ? entry.order : DEFAULT_KEY_ORDER.indexOf(entry.key),
-      filter: entry.key !== "artwork" && typeof entry.filter === "string" ? entry.filter : "",
+      filter: typeof entry.filter === "string" ? entry.filter : "",
       width: typeof entry.width === "number"
         ? clampLibraryColumnWidth(entry.width)
         : DEFAULT_WIDTHS[entry.key],
@@ -148,6 +149,12 @@ function sanitize(raw: unknown): LibraryColumnsState {
   // Version 1 hid Folder by default. Make the new provenance-first default
   // visible once, while version 2 continues to respect a user's later choice.
   if (isPreFolderDefaultState) byKey.get("folder")!.visible = true;
+  // The former 78px artwork default cannot fit both its label and the new
+  // direct filter button. Widen only that exact legacy default so a creator's
+  // deliberate custom width is preserved.
+  if (isPreHeaderFiltersState && byKey.get("artwork")!.width === 78) {
+    byKey.get("artwork")!.width = DEFAULT_WIDTHS.artwork;
+  }
 
   const columns = DEFAULT_KEY_ORDER.map((key) => byKey.get(key)!);
   renormalizeOrder(columns);
@@ -219,7 +226,7 @@ export function displayValue(track: Track, key: LibraryColumnKey): string {
   // extends carelessly later) can still omit them; treating that the same
   // as an explicit `null` is more forgiving than crashing on `String(undefined)`.
   switch (key) {
-    case "artwork": return "";
+    case "artwork": return track.has_artwork === true ? "Has artwork" : track.has_artwork === false ? "Missing artwork" : "Not checked";
     case "folder": return folderOf(track);
     case "filename": return track.relative_path.replace(/\\/g, "/").split("/").pop() ?? track.relative_path;
     case "artist": return track.artist ?? "";
@@ -266,6 +273,11 @@ function sortValue(track: Track, key: LibraryColumnKey): string | number {
 
 function matchesColumnFilter(track: Track, key: LibraryColumnKey, rawFilter: string): boolean {
   const filter = rawFilter.trim().toLowerCase();
+  if (key === "artwork") {
+    if (filter === "has") return track.has_artwork === true;
+    if (filter === "missing") return track.has_artwork === false;
+    if (filter === "unknown") return track.has_artwork == null;
+  }
   if (key === "instrumental") {
     if (filter === "ready") return track.outputs.instrumental && !track.instrumental_provenance?.quality;
     if (filter === "fast" || filter === "balanced" || filter === "high_quality") {

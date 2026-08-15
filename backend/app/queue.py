@@ -454,6 +454,7 @@ class JobQueueManager:
             title=refreshed.title,
             album=refreshed.album,
             year=refreshed.year,
+            has_artwork=refreshed.has_artwork,
         )
         if updated is None:
             return

@@ -146,7 +146,7 @@ describe("loadLibraryColumnsState / saveLibraryColumnsState", () => {
 
     const migrated = loadLibraryColumnsState(storage);
 
-    expect(migrated.version).toBe(4);
+    expect(migrated.version).toBe(5);
     expect(migrated.columns.find((column) => column.key === "folder")!.visible).toBe(false);
     expect(migrated.columns.every((column) => column.width >= MIN_LIBRARY_COLUMN_WIDTH)).toBe(true);
   });
@@ -163,6 +163,20 @@ describe("loadLibraryColumnsState / saveLibraryColumnsState", () => {
     for (const key of ["instrumental", "lyrics", "stems"] as const) {
       expect(migrated.columns.find((column) => column.key === key)?.visible).toBe(true);
     }
+  });
+
+  it("widens only the old default Artwork width for its direct filter control", () => {
+    const storage = new FakeStorage();
+    const legacy = defaultLibraryColumnsState();
+    legacy.version = 4;
+    legacy.columns.find((column) => column.key === "artwork")!.width = 78;
+    storage.setItem(LIBRARY_COLUMNS_STORAGE_KEY, JSON.stringify(legacy));
+
+    expect(loadLibraryColumnsState(storage).columns.find((column) => column.key === "artwork")!.width).toBe(100);
+
+    legacy.columns.find((column) => column.key === "artwork")!.width = 86;
+    storage.setItem(LIBRARY_COLUMNS_STORAGE_KEY, JSON.stringify(legacy));
+    expect(loadLibraryColumnsState(storage).columns.find((column) => column.key === "artwork")!.width).toBe(86);
   });
 
   it("clamps corrupt or extreme stored widths", () => {
@@ -242,7 +256,7 @@ describe("displayValue", () => {
     const t = track({ relative_path: "ABBA\\Arrival\\01 - Dancing Queen.flac", title: "Dancing Queen" });
     expect(displayValue(t, "filename")).toBe("01 - Dancing Queen.flac");
     expect(displayValue(t, "title")).toBe("Dancing Queen");
-    expect(displayValue(t, "artwork")).toBe("");
+    expect(displayValue(t, "artwork")).toBe("Not checked");
   });
 
   it("renders the media root for a file directly under it", () => {
@@ -368,6 +382,24 @@ describe("filterTracks", () => {
     expect(filterTracks([...tracks, fast, high, unknown], state).map((item) => item.id)).toEqual([4]);
     column.filter = "ready";
     expect(filterTracks([...tracks, fast, high, unknown], state).map((item) => item.id)).toEqual([5]);
+  });
+
+  it("filters artwork presence and combines it with another heading", () => {
+    const withArtwork = track({ id: 3, artist: "ABBA", has_artwork: true });
+    const missingArtwork = track({ id: 4, artist: "Queen", has_artwork: false });
+    const notChecked = track({ id: 5, artist: "ABBA", has_artwork: null });
+    const state = defaultLibraryColumnsState();
+    const artwork = state.columns.find((column) => column.key === "artwork")!;
+
+    artwork.filter = "has";
+    expect(filterTracks([withArtwork, missingArtwork, notChecked], state).map((item) => item.id)).toEqual([3]);
+
+    artwork.filter = "missing";
+    expect(filterTracks([withArtwork, missingArtwork, notChecked], state).map((item) => item.id)).toEqual([4]);
+
+    artwork.filter = "unknown";
+    state.columns.find((column) => column.key === "artist")!.filter = "abba";
+    expect(filterTracks([withArtwork, missingArtwork, notChecked], state).map((item) => item.id)).toEqual([5]);
   });
 });
 

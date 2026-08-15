@@ -67,7 +67,7 @@ def test_read_extended_tags_returns_artist_title_album_year(tmp_path, monkeypatc
 
     extended = read_extended_tags(path)
 
-    assert extended == ExtendedTags(artist="ABBA", title="Dancing Queen", album="Arrival", year=1976)
+    assert extended == ExtendedTags(artist="ABBA", title="Dancing Queen", album="Arrival", year=1976, has_artwork=False)
 
 
 def test_read_extended_tags_preserves_contributing_artists(tmp_path, monkeypatch):
@@ -144,7 +144,7 @@ def test_read_extended_tags_falls_back_to_filename_stem_for_title(tmp_path, monk
 
     extended = read_extended_tags(tmp_path / "Unknown Artist - Mystery Track.mp3")
 
-    assert extended == ExtendedTags(artist=None, title="Unknown Artist - Mystery Track", album=None, year=None)
+    assert extended == ExtendedTags(artist=None, title="Unknown Artist - Mystery Track", album=None, year=None, has_artwork=False)
 
 
 def test_read_tags_still_returns_the_plain_two_tuple(tmp_path, monkeypatch):
@@ -169,7 +169,7 @@ def test_read_extended_tags_survives_tag_access_exception(tmp_path, monkeypatch)
 
     extended = read_extended_tags(tmp_path / "broken.flac")
 
-    assert extended == ExtendedTags(artist=None, title="broken", album=None, year=None)
+    assert extended == ExtendedTags(artist=None, title="broken", album=None, year=None, has_artwork=False)
 
 
 def test_read_extended_tags_survives_non_string_date_tag(tmp_path, monkeypatch):

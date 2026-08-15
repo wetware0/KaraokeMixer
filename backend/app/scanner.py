@@ -11,6 +11,7 @@ from .duration import read_duration_seconds
 from .instrumental_provenance import read_instrumental_provenance_tag
 from .lrc import classify_lrc_file
 from .release_year import is_plausible_release_year
+from .tags import has_embedded_artwork
 
 AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".wav", ".aac", ".ogg"}
 
@@ -86,9 +87,10 @@ class ExtendedTags:
     title: str
     album: str | None
     year: int | None
+    has_artwork: bool | None = None
 
 
-def read_extended_tags(path: Path) -> ExtendedTags:
+def read_extended_tags(path: Path, *, include_artwork: bool = True) -> ExtendedTags:
     """Like read_tags, but also surfaces album/year - the single mutagen
     open this and read_tags now share. Survives any exception during extraction
     by falling back to defaults (title from stem, others None)."""
@@ -116,12 +118,21 @@ def read_extended_tags(path: Path) -> ExtendedTags:
         # — survive and use defaults. Caller will see title from stem + None for metadata.
         pass
 
-    return ExtendedTags(artist=artist, title=title or path.stem, album=album, year=year)
+    return ExtendedTags(
+        artist=artist,
+        title=title or path.stem,
+        album=album,
+        year=year,
+        has_artwork=has_embedded_artwork(path) if include_artwork else None,
+    )
 
 
 def read_tags(path: Path) -> tuple[str | None, str]:
     """Return (artist, title); title falls back to the filename stem."""
-    extended = read_extended_tags(path)
+    # Lyrics lookup needs only these two fields. Avoid a second container read
+    # for artwork in this hot path; scans and metadata refreshes request the
+    # complete ExtendedTags record and populate the catalogue flag.
+    extended = read_extended_tags(path, include_artwork=False)
     return extended.artist, extended.title
 
 
@@ -182,6 +193,7 @@ class TrackRecord:
     album: str | None
     year: int | None
     duration_seconds: float | None
+    has_artwork: bool | None = None
     instrumental_output_path: str | None = None
     instrumental_mtime_ns: int | None = None
     instrumental_size: int | None = None
@@ -240,6 +252,7 @@ def iter_media_root(media_root: Path, mirror_roots: list[Path]) -> Iterator[Trac
             album=extended.album,
             year=extended.year,
             duration_seconds=duration_seconds,
+            has_artwork=extended.has_artwork,
             instrumental_output_path=str(instrumental_path) if instrumental_path else None,
             instrumental_mtime_ns=instrumental_stat.st_mtime_ns if instrumental_stat else None,
             instrumental_size=instrumental_stat.st_size if instrumental_stat else None,

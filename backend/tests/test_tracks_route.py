@@ -33,8 +33,8 @@ def test_get_tracks_returns_all_tracks_with_expected_shape(tmp_path):
     track = body["tracks"][0]
     assert set(track.keys()) == {
         "id", "media_root", "relative_path", "artist", "title",
-        "outputs", "lrc_state", "stem_count", "album", "year", "duration_seconds",
-        "instrumental_provenance",
+            "outputs", "lrc_state", "stem_count", "album", "year", "duration_seconds",
+            "has_artwork", "instrumental_provenance",
     }
     assert track["instrumental_provenance"] is None
     assert set(track["outputs"].keys()) == {

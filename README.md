@@ -376,7 +376,13 @@ The Library is the main creator workspace.
   provides the same location choice without drag-and-drop and can also rename
   the file; its audio extension remains fixed.
 - Click a column heading to cycle ascending, descending, and unsorted.
-- Open **Columns** to show/hide fields, apply per-column filters, reorder
+- Click the small filter arrow in any heading to filter that field directly.
+  Text fields use case-insensitive “contains” matching; Instrumental, Lyrics,
+  Stems, and Artwork offer clear creator-facing choices. Filters combine, so
+  you can show, for example, ABBA tracks that are missing artwork and have no
+  enhanced lyrics. The action bar shows the remaining row count and provides
+  **Clear filters** when any filter is active.
+- Open **Columns** to show/hide fields, apply the same per-column filters, reorder
   columns by dragging, use arrow buttons for keyboard ordering, reset widths,
   or clear sorting.
 - Drag the handle at the right edge of a heading to resize a column. A focused
@@ -387,6 +393,11 @@ The Library is the main creator workspace.
   original source location. Instrumental, Lyrics, and Stems are also separate
   creator-readiness columns: sort them from the heading or use the Columns
   panel's quality/readiness, timing-state, and Has stems/No stems filters.
+- Artwork can be filtered as **Has artwork**, **Missing artwork**, or **Not
+  checked**. Presence is cached during a background library scan, rather than
+  downloading thousands of cover images just to filter the table. Newly
+  upgraded catalogues may show **Not checked** until the next rescan reaches
+  those files; results update progressively as scan batches are published.
 - Instrumental reports **High Quality**, **Balanced**, or **Fast** when the app
   can safely identify how the current file was produced. Hover the value for
   the separation engine, model, source job, and whether the attribution was

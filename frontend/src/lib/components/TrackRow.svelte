@@ -174,7 +174,7 @@
         class="track-row-cell track-row-cell-artwork"
         style={`width: ${column.width}px; min-width: ${column.width}px; max-width: ${column.width}px;`}
       >
-        {#if artworkMissing}
+        {#if artworkMissing || track.has_artwork === false}
           <span class="track-row-artwork-placeholder" aria-label={`No artwork for ${track.title}`}>♪</span>
         {:else}
           {#key `${track.id}:${revision}`}

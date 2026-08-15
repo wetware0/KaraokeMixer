@@ -23,6 +23,7 @@ from ..db import (
     list_tracks,
     track_has_active_job,
     update_track_lrc_state,
+    update_track_artwork_state,
     update_track_tags,
 )
 from ..duration import read_duration_seconds
@@ -582,7 +583,8 @@ async def write_track_artwork(track_id: int, request: Request) -> dict:
             write_embedded_artwork(path, data, content_type)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-    return {"path": str(path)}
+        updated = update_track_artwork_state(conn, track_id, True)
+    return {"path": str(path), "track": updated}
 
 
 class TagsWritePayload(BaseModel):
@@ -671,6 +673,12 @@ def write_track_tags_route(track_id: int, payload: TagsWritePayload, request: Re
         # a DB failure after a successful file write leaves file and DB diverged
         # until the next rescan, which re-reads the filesystem and self-heals.
         updated = update_track_tags(
-            conn, track_id, artist=refreshed.artist, title=refreshed.title, album=refreshed.album, year=refreshed.year
+            conn,
+            track_id,
+            artist=refreshed.artist,
+            title=refreshed.title,
+            album=refreshed.album,
+            year=refreshed.year,
+            has_artwork=refreshed.has_artwork,
         )
     return updated
