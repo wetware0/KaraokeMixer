@@ -38,7 +38,7 @@ def test_missing_acoustic_score_cannot_be_automatically_verified():
     assert result.word_details[0]["confidence"] <= 35
 
 
-def test_gross_same_direction_error_is_corrected_but_still_marked_for_review():
+def test_same_direction_disagreement_is_retained_until_asr_corroborates_it():
     document = AlignmentDocument.parse("[00:01.00]<00:01.00>Hello\n")
     result = build_dual_audio_consensus(
         document,
@@ -47,11 +47,11 @@ def test_gross_same_direction_error_is_corrected_but_still_marked_for_review():
         _assignment([3.2], [0.70]),
     )
 
-    assert result.selected_starts == [2.6]
-    assert result.corrected_words == 1
+    assert result.selected_starts == [1.0]
+    assert result.corrected_words == 0
     assert result.review_words == 1
     assert result.word_details[0]["status"] == "review"
-    assert result.word_details[0]["correction_basis"] == "gross_directional"
+    assert result.word_details[0]["correction_basis"] == "directional_review"
 
 
 def test_conflicting_correction_is_reverted_instead_of_reordering_words():

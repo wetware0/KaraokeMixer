@@ -25,7 +25,7 @@
     lyrics_only: { label: "Lyrics and enhanced timing", description: "Find lyrics and create a fresh timestamp for every word without separating audio." },
     fetch_tags: { label: "Tags and artwork", description: "Look up missing artist, title, album, year and cover art." },
     full_prep: { label: "Complete karaoke preparation", description: "Create stems, fetch metadata and prepare timed lyrics in one job." },
-    improve_lyrics: { label: "Improve lyric timing", description: "Deep review adds independent song transcription to the original and vocal-residual alignments, while keeping uncertain or large timing changes flagged." },
+    improve_lyrics: { label: "Improve lyric timing", description: "High Accuracy isolates the singer, transcribes the vocal, and aligns the exact lyrics by song section. Existing timing is preserved when it already agrees." },
   };
   const optionLabels: Record<string, string> = {
     processing_profile: "Processing profile",
@@ -65,7 +65,13 @@
   }
 
   function choiceLabel(key: string, value: string): string {
-    if (key === "timing_review_profile") return value === "deep" ? "Deep review (recommended)" : "Quick dual-audio review";
+    if (key === "timing_review_profile") {
+      return ({
+        high_accuracy: "High Accuracy — isolated vocal (recommended)",
+        deep: "Legacy deep review",
+        quick: "Quick dual-audio review",
+      } as Record<string, string>)[value] ?? humanize(value);
+    }
     if (key === "processing_profile") return profileCopy[value]?.label ?? humanize(value);
     if (key === "asr_model") return value === "base.en" ? "Base (fastest)" : value === "small.en" ? "Small (balanced)" : "Medium (highest accuracy)";
     if (key === "backing_vocal_mode") {

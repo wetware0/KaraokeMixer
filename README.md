@@ -409,14 +409,15 @@ The Library is the main creator workspace.
   files without a valid confirmation show **Needs review**. The confirmation
   is bound to the exact LRC contents and is automatically invalidated by any
   later lyric or timing edit.
-- After **Improve lyric timing**, Lyrics reports `Review N/100`. **Deep review
-  (recommended)** adds independent Medium-model song transcription to the
-  original-mix and vocal-residual alignments. It promotes only directly
-  matched words corroborated by a constrained alignment; timing changes over
-  two seconds remain Review to guard against repeated-chorus mistakes. The
-  score is evidence, not a probability. Hover for verified/corrected/review
-  counts; filter **Confidence checked** or **Not confidence checked** to build
-  a batch. See [Automatic lyric timing improvement](docs/LYRIC_TIMING_CONFIDENCE.md).
+- After **Improve lyric timing**, Lyrics reports `Review N/100`. **High
+  Accuracy — isolated vocal (recommended)** separates a temporary vocal stem,
+  transcribes it, locates each song section, and force-aligns the exact lyrics
+  locally. It preserves an already-agreeing file and rejects isolated
+  one-second outliers. Legacy Deep and Quick dual-audio review remain
+  available. The score is evidence, not a probability. Hover for
+  verified/corrected/review counts; filter **Confidence checked** or **Not
+  confidence checked** to build a batch. See [Automatic lyric timing
+  improvement](docs/LYRIC_TIMING_CONFIDENCE.md).
 - To find incomplete final-quality tracks, combine the heading filters
   **Instrumental: High Quality** and **Lyrics: Needs review**. This is the
   remediation queue for tracks whose separation is final but whose lyric
@@ -485,7 +486,7 @@ workflow's default.
 | **Lyrics and enhanced timing** | LRC download plus optional full per-word timing | GPU queue; WhisperX runs only when alignment is requested |
 | **Tags and artwork** | Missing/replacement metadata and embedded cover art | CPU |
 | **Complete karaoke preparation** | Stems, instrumental, lyrics/timing, tags, and artwork | GPU |
-| **Improve lyric timing** | Deep three-way review (recommended) or quicker dual-audio repair of an enhanced LRC | GPU |
+| **Improve lyric timing** | High Accuracy isolated-vocal review (recommended), legacy Deep, or Quick dual-audio audit | GPU |
 
 The CPU and GPU queues are independent, with one job running in each lane. A
 metadata job can therefore run alongside a separation job. Compatible models
@@ -631,12 +632,13 @@ The editor chooses the best available review source in this order:
 - **Re-time every word with AI** discards every existing line, break, and word
   marker and rebuilds an enhanced LRC for the complete song. Save or undo
   manual changes first.
-- **Improve lyric timing** is available from the Library's Process dialog for
-  conservative bulk repair. Deep review reuses a valid earlier dual-audio
-  report, so reruns normally perform only the independent Medium ASR pass. It
-  keeps uncertain and large-shift markers flagged, saves a one-time
-  `.before-confidence.lrc` backup, and records per-word review evidence. Quick
-  dual-audio review remains available when throughput matters more.
+- **Improve lyric timing** is available from the Library's Process dialog.
+  High Accuracy isolates a temporary Demucs vocal stem, transcribes it, places
+  each lyric section, and force-aligns the exact words locally. It preserves
+  timing that already agrees, keeps sparse lines and isolated outliers for
+  review, saves a one-time `.before-confidence.lrc` backup, and records
+  per-word evidence. Legacy Deep and Quick dual-audio review remain available
+  for comparison or lower processing cost.
 - After that workflow, pale amber words still need review. **Next review word**
   jumps between them without stepping through the whole song.
 - AI timing must acoustically match at least 80% of the supplied lyric words.

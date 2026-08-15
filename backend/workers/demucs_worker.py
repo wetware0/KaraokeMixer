@@ -7,7 +7,8 @@ TrackSeparator/src/core/separator.py::AudioSeparator.separate_stems and
 TrackSeparator/src/core/audio_tensor_utils.py::save_tensor_as_pcm16_wav.
 
 args: {"input_path": str, "model": str, "device": str,
-       "stem_indices": {stem_name: source_index}, "output_paths": {stem_name: wav_path}}
+       "stem_indices": {stem_name: source_index}, "output_paths": {stem_name: wav_path},
+       "shifts": optional_int}
 result payload: {"stems": [stem_name, ...]}
 """
 from __future__ import annotations
@@ -51,7 +52,15 @@ def _run_request(args: dict, dependencies: tuple, cache: dict) -> None:
         [10.0] + [float(m.segment) for m in getattr(model, "models", [model]) if getattr(m, "segment", None)]
     )
     with torch.amp.autocast("cuda", enabled=device == "cuda" and torch.cuda.is_available()):
-        sources = apply_model(model, wav, device=device, progress=False, segment=segment, overlap=0.25)
+        sources = apply_model(
+            model,
+            wav,
+            device=device,
+            progress=False,
+            segment=segment,
+            overlap=0.25,
+            shifts=int(args.get("shifts", 1)),
+        )
     if sources.dim() == 4 and sources.shape[0] == 1:
         sources = sources[0]
 

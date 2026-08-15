@@ -5,17 +5,47 @@ _Decision record: 2026-08-15_
 ## Outcome
 
 Karaoke Mixer now has a bulk-safe **Improve lyric timing** workflow for tracks
-that already have enhanced per-word LRC timing and a karaoke instrumental. It
-does more than identify suspicious timing: it corrects word markers when the
-audio evidence supports a change, preserves the existing marker when the
-evidence is genuinely ambiguous, and narrows manual review to the remaining
-words.
+that already have enhanced per-word LRC timing. The recommended High Accuracy
+profile works from a newly isolated vocal stem rather than subtracting the
+lossy instrumental. It corrects broadly displaced timing, preserves an input
+that already agrees with the vocal evidence, and narrows manual review to
+sparse lines and isolated outliers.
 
 The confidence score is an evidence score from 0 to 100, not a claim of human
 perceptual accuracy. The application never raises the score merely because it
 made a correction.
 
-## How it works
+## High Accuracy isolated-vocal review (recommended)
+
+1. Demucs `htdemucs_ft` creates a temporary vocal stem from the original.
+2. Whisper Medium transcribes the vocal without receiving the supplied lyric
+   text, producing independently discovered words and timestamps.
+3. Ordered matching locates each lyric line in the complete song.
+4. WhisperX force-aligns the exact supplied words inside those discovered
+   line windows.
+5. The transcript is matched locally around each placed line so repeated
+   choruses cannot attach to another occurrence.
+6. When the candidate and input differ by a median of no more than 100 ms, the
+   input is preserved. Agreement is evidence, not a reason to rewrite an
+   already-good file.
+7. Lines with less than 50% direct transcript coverage remain Review. Their
+   old markers are preserved when the complete track already agrees; on a
+   broadly displaced track, the exact forced markers are applied but remain
+   uncertified. On an otherwise stable line, an isolated proposal more than
+   one second from the line's median movement is retained.
+8. Generated line markers use the first word onset; no fixed pre-roll is
+   invented.
+
+Bulk execution has separate Demucs and Whisper phases. Each model stays warm
+across its phase, then the worker pool closes before the next model family
+loads. The temporary vocal cache is deleted after each timing result.
+Timing-vocal separation disables Demucs' random time shift so rerunning the
+same source produces repeatable evidence; instrumental creation is unchanged.
+
+The listening-corrected ABBA evaluation and thresholds are recorded in
+[`LYRIC_TIMING_HUMAN_REFERENCE.md`](LYRIC_TIMING_HUMAN_REFERENCE.md).
+
+## Legacy dual-audio review
 
 1. Forced-align the supplied lyric lines against the original mix.
 2. Build a temporary vocal residual by subtracting the existing instrumental
@@ -24,18 +54,18 @@ made a correction.
 3. For each word:
    - if the two views agree within 250 ms and have acoustic scores, use their
      midpoint and mark the word **verified**;
-   - if they disagree on the exact time but both prove the existing marker is
-     at least 250 ms wrong in the same direction, apply their midpoint as a
-     conservative repair and keep the word highlighted for review;
+   - if they disagree on the exact time but both place the word in the same
+     direction, retain the existing marker and flag the directional evidence
+     for review;
    - otherwise retain the existing marker and highlight it for review.
 4. Reject the complete pass when either view matches less than 80% of the
    supplied words. The LRC remains unchanged.
 5. Prevent corrections from reordering neighbouring words. A conflicting
    proposal is reverted and marked for review.
 
-### Deep review (recommended)
+### Legacy Deep review
 
-The default profile adds a third signal: the Medium Whisper model transcribes
+The legacy Deep profile adds a third signal: the Medium Whisper model transcribes
 the complete song without being given the supplied lyric text. Its directly
 matched words can corroborate either constrained alignment. A disputed word is
 promoted only when:
@@ -52,10 +82,12 @@ repairs may remain applied when supported, but stay visibly marked **Review**.
 The report records the ASR coverage, corroborated-word count and large-shift
 count separately.
 
-When a valid, hash-bound dual-audio report already exists, Deep review reuses
+When a valid, hash-bound dual-audio report already exists, legacy Deep review reuses
 that evidence and runs only the ASR pass. This makes the follow-up resumable and
 avoids repeating two GPU alignments. Choose **Quick dual-audio review** when the
-third transcription cost is not justified.
+third transcription cost is not justified. Same-direction disagreement is now
+review-only because the Chiquitita human reference proved that it is unsafe as
+standalone correction evidence.
 
 The two passes use the same WhisperX alignment model, so their agreement is
 described as **dual-audio evidence**, not independent-model proof. This wording
@@ -145,9 +177,9 @@ not consistently improve agreement and was rejected.
 
 - Bulk replacement from one model can make a whole library consistently wrong.
 - Pure detection still leaves too much manual work.
-- Dual-audio agreement safely automates the strongest corrections, while the
-  same-direction rule repairs obvious gross errors without pretending their
-  exact timing is verified.
+- Dual-audio agreement safely automates only close corroborated corrections.
+  Same-direction disagreement is review evidence, not permission to move a
+  marker; Peter's human references showed those legacy moves were often wrong.
 - A score plus word-level review targets is more useful to a karaoke creator
   than a binary Ready/Not Ready flag.
 - The separate detail file keeps the 80,000-track Library fast.
