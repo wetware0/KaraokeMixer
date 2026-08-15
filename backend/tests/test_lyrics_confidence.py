@@ -144,3 +144,22 @@ def test_dual_agreement_applies_but_does_not_verify_a_large_shift():
     assert result.review_words == 1
     assert result.large_shift_words == 1
     assert result.word_details[0]["correction_basis"] == "large_shift_review"
+
+
+def test_order_revert_keeps_cumulative_correction_without_looping():
+    document = AlignmentDocument.parse(
+        "[00:01.00]<00:01.50>one<00:02.50> two",
+    )
+
+    result = build_dual_audio_consensus(
+        document,
+        [1.5, 2.5],
+        _assignment([3.0, 2.0], [0.8, 0.9]),
+        _assignment([3.0, 2.0], [0.8, 0.9]),
+        baseline_starts=[1.0, 2.0],
+    )
+
+    assert result.selected_starts == [1.5, 2.0]
+    assert result.word_details[0]["status"] == "review"
+    assert result.word_details[0]["correction_basis"] == "order_conflict_review"
+    assert result.word_details[0]["corrected"] is True

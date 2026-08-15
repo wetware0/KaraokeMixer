@@ -277,6 +277,7 @@ def _word_confidence(
 def _revert_order_conflicts(
     selected: list[float], current: list[float], details: list[dict]
 ) -> None:
+    reverted: set[int] = set()
     while True:
         conflict = next(
             (index for index in range(1, len(selected)) if selected[index] < selected[index - 1]),
@@ -284,18 +285,25 @@ def _revert_order_conflicts(
         )
         if conflict is None:
             return
-        candidates = [index for index in (conflict - 1, conflict) if details[index]["corrected"]]
+        candidates = [
+            index for index in (conflict - 1, conflict)
+            if details[index]["corrected"] and index not in reverted
+        ]
         if not candidates:
             # Existing enhanced files are expected to be monotonic, but keep
             # the result safe even when importing a malformed external file.
             selected[conflict] = selected[conflict - 1]
             details[conflict]["selected_seconds"] = round(selected[conflict], 3)
             details[conflict]["status"] = "review"
-            return
+            details[conflict]["correction_basis"] = "order_conflict_review"
+            reverted.add(conflict)
+            continue
         revert_index = min(candidates, key=lambda index: details[index]["confidence"])
+        reverted.add(revert_index)
         selected[revert_index] = current[revert_index]
         details[revert_index]["selected_seconds"] = round(current[revert_index], 3)
         details[revert_index]["status"] = "review"
+        details[revert_index]["correction_basis"] = "order_conflict_review"
         baseline = float(details[revert_index].get(
             "baseline_seconds", details[revert_index]["previous_seconds"],
         ))
