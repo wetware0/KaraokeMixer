@@ -10,6 +10,7 @@ AGREEMENT_LIMIT_SECONDS = 0.25
 CORRECTION_THRESHOLD_SECONDS = 0.05
 DIRECTIONAL_CORRECTION_MARGIN_SECONDS = 0.25
 MAX_DIRECTIONAL_SPREAD_SECONDS = 2.0
+MAX_AUTOMATIC_SHIFT_SECONDS = 2.0
 AUTOMATIC_HIGH_QUALITY_SCORE = 85
 
 
@@ -25,6 +26,8 @@ class TimingConfidenceResult:
     agreement_within_0_25: int
     median_agreement_seconds: float
     quality: str
+    asr_corroborated_words: int = 0
+    large_shift_words: int = 0
 
 
 def build_dual_audio_consensus(
@@ -32,6 +35,8 @@ def build_dual_audio_consensus(
     current_starts: list[float],
     original: TimingAssignment,
     residual: TimingAssignment,
+    *,
+    baseline_starts: list[float] | None = None,
 ) -> TimingConfidenceResult:
     """Apply only word corrections supported by two acoustic views.
 
@@ -43,7 +48,11 @@ def build_dual_audio_consensus(
     """
     words = document.tokens
     expected = len(words)
-    lengths = {expected, len(current_starts), len(original.starts), len(residual.starts)}
+    baseline_starts = baseline_starts or current_starts
+    lengths = {
+        expected, len(current_starts), len(baseline_starts),
+        len(original.starts), len(residual.starts),
+    }
     if len(lengths) != 1:
         raise ValueError("current lyrics and timing evidence have different word counts")
     if expected == 0:
@@ -60,21 +69,24 @@ def build_dual_audio_consensus(
             continue
         for word_index, token in enumerate(line.tokens):
             previous = current_starts[flat_index]
+            baseline = baseline_starts[flat_index]
             original_start = original.starts[flat_index]
             residual_start = residual.starts[flat_index]
             original_score = original.scores[flat_index]
             residual_score = residual.scores[flat_index]
             agreement = abs(original_start - residual_start)
             confidence = _word_confidence(agreement, original_score, residual_score)
-            verified = (
+            acoustically_verified = (
                 original_score is not None
                 and residual_score is not None
                 and agreement <= AGREEMENT_LIMIT_SECONDS
                 and confidence >= 60
             )
             consensus = (original_start + residual_start) / 2.0
+            large_shift = abs(consensus - baseline) > MAX_AUTOMATIC_SHIFT_SECONDS
+            verified = acoustically_verified and not large_shift
             directional = (
-                not verified
+                not acoustically_verified
                 and original_score is not None
                 and residual_score is not None
                 and max(original_score, residual_score) >= 0.45
@@ -83,10 +95,10 @@ def build_dual_audio_consensus(
                     >= DIRECTIONAL_CORRECTION_MARGIN_SECONDS
                 and (original_start - previous) * (residual_start - previous) > 0
             )
-            chosen = consensus if verified or directional else previous
+            chosen = consensus if acoustically_verified or directional else previous
             corrected = (
-                (verified or directional)
-                and abs(previous - consensus) >= CORRECTION_THRESHOLD_SECONDS
+                (acoustically_verified or directional)
+                and abs(baseline - consensus) >= CORRECTION_THRESHOLD_SECONDS
             )
             selected.append(chosen)
             confidences.append(confidence)
@@ -96,6 +108,7 @@ def build_dual_audio_consensus(
                 "word_index": word_index,
                 "word": token.text,
                 "previous_seconds": round(previous, 3),
+                "baseline_seconds": round(baseline, 3),
                 "selected_seconds": round(chosen, 3),
                 "original_seconds": round(original_start, 3),
                 "residual_seconds": round(residual_start, 3),
@@ -106,6 +119,7 @@ def build_dual_audio_consensus(
                 "status": "verified" if verified else "review",
                 "correction_basis": (
                     "verified_agreement" if verified
+                    else "large_shift_review" if acoustically_verified and large_shift
                     else "gross_directional" if directional
                     else "retained_existing"
                 ),
@@ -118,8 +132,99 @@ def build_dual_audio_consensus(
     # proposed corrections until the original monotonic ordering is restored.
     _revert_order_conflicts(selected, current_starts, details)
 
+    return _build_result(selected, details, confidences)
+
+
+def build_three_way_consensus(
+    document: AlignmentDocument,
+    current_starts: list[float],
+    original: TimingAssignment,
+    residual: TimingAssignment,
+    asr: TimingAssignment,
+    *,
+    baseline_starts: list[float] | None = None,
+) -> TimingConfidenceResult:
+    """Add independently discovered ASR words to the dual-audio audit.
+
+    ASR is allowed to promote a disputed word only when it directly matched
+    that lyric word, agrees with one line-constrained acoustic view, and the
+    resulting marker remains close to both the input and pre-audit baseline.
+    This recovers evidence lost to a noisy subtraction residual without
+    allowing repeated choruses to create automatically trusted large jumps.
+    """
+    baseline_starts = baseline_starts or current_starts
+    expected = len(document.tokens)
+    lengths = {
+        expected, len(current_starts), len(baseline_starts), len(original.starts),
+        len(residual.starts), len(asr.starts),
+    }
+    if len(lengths) != 1:
+        raise ValueError("current lyrics and timing evidence have different word counts")
+
+    dual = build_dual_audio_consensus(
+        document, current_starts, original, residual, baseline_starts=baseline_starts,
+    )
+    selected = list(dual.selected_starts)
+    details = [dict(row) for row in dual.word_details]
+    confidences = [int(row["confidence"]) for row in details]
+
+    for index, row in enumerate(details):
+        row["asr_seconds"] = round(asr.starts[index], 3)
+        row["asr_score"] = _rounded_score(asr.scores[index])
+        if row["status"] == "verified" or asr.scores[index] is None:
+            continue
+
+        candidates: list[tuple[int, float, float, str]] = []
+        for source_name, source_start, source_score in (
+            ("original", original.starts[index], original.scores[index]),
+            ("residual", residual.starts[index], residual.scores[index]),
+        ):
+            if source_score is None:
+                continue
+            agreement = abs(source_start - asr.starts[index])
+            confidence = _word_confidence(agreement, source_score, asr.scores[index])
+            if agreement <= AGREEMENT_LIMIT_SECONDS and confidence >= 60:
+                candidates.append((
+                    confidence,
+                    agreement,
+                    (source_start + asr.starts[index]) / 2.0,
+                    source_name,
+                ))
+        if not candidates:
+            continue
+
+        confidence, agreement, candidate, source_name = max(
+            candidates, key=lambda value: (value[0], -value[1]),
+        )
+        baseline_shift = abs(candidate - baseline_starts[index])
+        input_shift = abs(candidate - current_starts[index])
+        if (
+            baseline_shift > MAX_AUTOMATIC_SHIFT_SECONDS
+            or input_shift > MAX_AUTOMATIC_SHIFT_SECONDS
+        ):
+            row["correction_basis"] = "large_shift_review"
+            continue
+
+        selected[index] = candidate
+        confidences[index] = confidence
+        row.update({
+            "selected_seconds": round(candidate, 3),
+            "agreement_seconds": round(agreement, 3),
+            "confidence": confidence,
+            "status": "verified",
+            "correction_basis": f"asr_corroborated_{source_name}",
+            "corrected": abs(candidate - baseline_starts[index]) >= CORRECTION_THRESHOLD_SECONDS,
+        })
+
+    _revert_order_conflicts(selected, current_starts, details)
+    return _build_result(selected, details, confidences)
+
+
+def _build_result(
+    selected: list[float], details: list[dict], confidences: list[int],
+) -> TimingConfidenceResult:
     verified_words = sum(row["status"] == "verified" for row in details)
-    review_words = expected - verified_words
+    review_words = len(details) - verified_words
     corrected_words = sum(bool(row["corrected"]) for row in details)
     review_lines = len({row["line_index"] for row in details if row["status"] == "review"})
     agreements = [float(row["agreement_seconds"]) for row in details]
@@ -140,6 +245,11 @@ def build_dual_audio_consensus(
         agreement_within_0_25=sum(value <= AGREEMENT_LIMIT_SECONDS for value in agreements),
         median_agreement_seconds=round(statistics.median(agreements), 3),
         quality=quality,
+        asr_corroborated_words=sum(
+            str(row.get("correction_basis", "")).startswith("asr_corroborated_")
+            for row in details
+        ),
+        large_shift_words=sum(row.get("correction_basis") == "large_shift_review" for row in details),
     )
 
 
@@ -186,7 +296,12 @@ def _revert_order_conflicts(
         selected[revert_index] = current[revert_index]
         details[revert_index]["selected_seconds"] = round(current[revert_index], 3)
         details[revert_index]["status"] = "review"
-        details[revert_index]["corrected"] = False
+        baseline = float(details[revert_index].get(
+            "baseline_seconds", details[revert_index]["previous_seconds"],
+        ))
+        details[revert_index]["corrected"] = (
+            abs(current[revert_index] - baseline) >= CORRECTION_THRESHOLD_SECONDS
+        )
 
 
 def _rounded_score(value: float | None) -> float | None:

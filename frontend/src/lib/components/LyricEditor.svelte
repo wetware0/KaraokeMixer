@@ -754,6 +754,12 @@
         {timingReport.summary.verified_words ?? 0} verified ·
         {timingReport.summary.review_words ?? 0} words in {timingReport.summary.review_lines ?? 0} lines need review ·
         {timingReport.summary.corrected_words ?? 0} corrected
+        {#if (timingReport.summary.asr_corroborated_words ?? 0) > 0}
+          · {timingReport.summary.asr_corroborated_words} ASR corroborated
+        {/if}
+        {#if (timingReport.summary.large_shift_words ?? 0) > 0}
+          · {timingReport.summary.large_shift_words} large shifts kept for review
+        {/if}
       </p>
     {/if}
     {#if backgroundRefreshMessage}

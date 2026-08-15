@@ -33,6 +33,30 @@ made a correction.
 5. Prevent corrections from reordering neighbouring words. A conflicting
    proposal is reverted and marked for review.
 
+### Deep review (recommended)
+
+The default profile adds a third signal: the Medium Whisper model transcribes
+the complete song without being given the supplied lyric text. Its directly
+matched words can corroborate either constrained alignment. A disputed word is
+promoted only when:
+
+- ASR directly matched that word rather than interpolating it;
+- its marker is within 250 ms of the original-mix or vocal-residual alignment;
+- the combined evidence passes the normal acoustic confidence gate; and
+- the candidate is within two seconds of both the input timing and the
+  pre-audit baseline.
+
+The last rule prevents a repeated chorus or held word from becoming trusted
+merely because two model paths chose the same distant occurrence. Larger
+repairs may remain applied when supported, but stay visibly marked **Review**.
+The report records the ASR coverage, corroborated-word count and large-shift
+count separately.
+
+When a valid, hash-bound dual-audio report already exists, Deep review reuses
+that evidence and runs only the ASR pass. This makes the follow-up resumable and
+avoids repeating two GPU alignments. Choose **Quick dual-audio review** when the
+third transcription cost is not justified.
+
 The two passes use the same WhisperX alignment model, so their agreement is
 described as **dual-audio evidence**, not independent-model proof. This wording
 is deliberate.
@@ -98,6 +122,25 @@ report contains 361 entries, and the original LRC exists as
 the remaining 623 enhanced tracks with High Quality instrumentals; it is
 recorded in Processing History and can be cancelled normally if needed.
 
+Job 122 stopped with 622 completed tracks and one safe rejection: Queen's
+`Seven Seas of Rhye…` matched only 45% in both views, so its LRC was left
+unchanged. Across the completed tracks the first pass corrected 44,524 of
+158,996 words, verified 62.6%, and left 37.4% for review. Six tracks met the
+strict automatic High Quality gate. The median track score was 68/100. This
+was valuable repair and triage, but not broad automatic certification.
+
+The Deep review scratch proof then used real, copied production inputs without
+changing the library:
+
+- `Does Your Mother Know`: 72 -> 77, review words 99 -> 75, with 34 ASR
+  corroborations and nine large shifts deliberately retained for review.
+- `Little Things`: 91 -> 92, review words 6 -> 1, with five ASR
+  corroborations and no large shifts.
+
+The persistent worker loaded Medium once and reused it for the second track.
+Gain-calibrating the instrumental subtraction was also tested first, but it did
+not consistently improve agreement and was rejected.
+
 ## Why this design was chosen
 
 - Bulk replacement from one model can make a whole library consistently wrong.
@@ -109,6 +152,8 @@ recorded in Processing History and can be cancelled normally if needed.
   than a binary Ready/Not Ready flag.
 - The separate detail file keeps the 80,000-track Library fast.
 - Retaining the pre-confidence LRC makes bulk use recoverable.
+- Independent ASR is spent only on the remaining uncertainty, while the
+  two-second baseline gate prevents confidence inflation from repeated lyrics.
 
 Automatic **High Quality** remains deliberately strict: every word must be
 verified and the track score must be at least 85/100. A human listening
