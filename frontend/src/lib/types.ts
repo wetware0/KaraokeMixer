@@ -274,7 +274,7 @@ export interface LyricTimingWordDetail {
   asr_score?: number | null;
   confidence: number;
   status: "verified" | "review";
-  correction_basis?: "verified_agreement" | "asr_corroborated_original" | "asr_corroborated_residual" | "large_shift_review" | "gross_directional" | "retained_existing";
+  correction_basis?: "verified_agreement" | "asr_corroborated_original" | "asr_corroborated_residual" | "large_shift_review" | "order_conflict_review" | "gross_directional" | "retained_existing";
   corrected: boolean;
 }
 
