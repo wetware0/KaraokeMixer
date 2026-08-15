@@ -55,11 +55,16 @@ def test_automatic_review_metrics_round_trip_and_invalid_data_is_rejected(tmp_pa
         "coverage": 1.0,
         "median_confidence": 0.42,
         "low_confidence_words": 1,
+        "asr_matched": 1,
+        "asr_coverage": 1.0,
+        "asr_corroborated_words": 1,
+        "large_shift_words": 0,
         "attribution": "automatic",
         "confirmed_by": None,
     })
 
     assert read_lyric_timing_provenance(lrc) == written
+    assert written["asr_corroborated_words"] == 1
     sidecar = lyric_timing_sidecar_path(lrc)
     sidecar.write_text(json.dumps({"schema_version": 1, "part": "lyrics", "quality": "invented"}))
     assert read_lyric_timing_provenance(lrc) is None

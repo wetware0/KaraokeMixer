@@ -9,16 +9,18 @@ from ..lrc import TimingState, classify_lrc_file, read_lrc_text
 from ..lyrics.alignment import (
     AlignmentDocument,
     ObservedWord,
+    TimingAssignment,
     WORD_TIMESTAMP_RE,
     _parse_timestamp,
     assign_word_timings,
     line_timed_segments,
 )
-from ..lyrics.confidence import build_dual_audio_consensus
+from ..lyrics.confidence import build_dual_audio_consensus, build_three_way_consensus
 from ..lyrics.paths import resolve_lrc_path
 from ..lyrics.provenance import (
     lyric_timing_details_path,
     lyric_timing_sidecar_path,
+    read_lyric_timing_report,
     write_lyric_timing_report,
 )
 from ..pipeline import StageContext, StageResult, StageStatus, atomic_publish
@@ -32,12 +34,12 @@ BACKUP_SUFFIX = ".before-confidence.lrc"
 
 
 class ImproveLyricsStage:
-    """Improve enhanced timing using agreement across two acoustic views.
+    """Improve enhanced timing using conservative multi-signal evidence.
 
-    The canonical LRC is changed only for words independently supported by
-    line-constrained alignment of the original mix and original-minus-
-    instrumental vocal residual. Disputed words remain untouched and are
-    recorded for focused editor review.
+    Quick review compares line-constrained alignment of the original mix and
+    original-minus-instrumental vocal residual. Deep review adds independently
+    discovered full-song ASR words. Disputed and large-shift words remain
+    explicit focused editor review targets.
     """
 
     name = "improve_lyrics"
@@ -47,12 +49,16 @@ class ImproveLyricsStage:
         *,
         device: str = "cpu",
         language: str = "en",
+        deep_review: bool = True,
+        asr_model: str = "medium",
         venv_python: Path | None = None,
         runner: Callable[..., WorkerResult] = run_worker,
         residual_builder: Callable[[Path, Path, Path], None] | None = None,
     ) -> None:
         self._device = device
         self._language = language
+        self._deep_review = deep_review
+        self._asr_model = asr_model
         self._venv_python = venv_python or default_whisperx_venv_python()
         self._runner = runner
         self._residual_builder = residual_builder or _build_vocal_residual
@@ -103,45 +109,78 @@ class ImproveLyricsStage:
                 status=StageStatus.FAILED,
                 detail="enhanced LRC word markers do not match its lyric word count",
             )
+        existing_report = read_lyric_timing_report(lrc_path) if self._deep_review else None
+        reusable_evidence = _reusable_dual_evidence(existing_report, current_starts)
         try:
             duration = _probe_duration(source_path)
             segments = line_timed_segments(document, duration=duration)
             runner = ctx.worker_runner or self._runner
-            original_result = _run_alignment(
-                runner, self._venv_python, source_path, segments, self._language,
-                self._device, ctx,
-            )
-            if original_result.status != "completed":
-                return StageResult(
-                    status=StageStatus.FAILED,
-                    detail=original_result.error_text or "original-mix lyric alignment failed",
-                )
-            with tempfile.TemporaryDirectory(prefix="karaoke-lyric-confidence-") as raw_temp:
-                residual_path = Path(raw_temp) / "vocal-residual.wav"
-                self._residual_builder(source_path, instrumental, residual_path)
-                residual_result = _run_alignment(
-                    runner, self._venv_python, residual_path, segments, self._language,
+            target_words = [token.text for token in document.tokens]
+            if reusable_evidence is None:
+                original_result = _run_alignment(
+                    runner, self._venv_python, source_path, segments, self._language,
                     self._device, ctx,
                 )
-            if residual_result.status != "completed":
-                return StageResult(
-                    status=StageStatus.FAILED,
-                    detail=residual_result.error_text or "vocal-residual lyric alignment failed",
-                )
+                if original_result.status != "completed":
+                    return StageResult(
+                        status=StageStatus.FAILED,
+                        detail=original_result.error_text or "original-mix lyric alignment failed",
+                    )
+                with tempfile.TemporaryDirectory(prefix="karaoke-lyric-confidence-") as raw_temp:
+                    residual_path = Path(raw_temp) / "vocal-residual.wav"
+                    self._residual_builder(source_path, instrumental, residual_path)
+                    residual_result = _run_alignment(
+                        runner, self._venv_python, residual_path, segments, self._language,
+                        self._device, ctx,
+                    )
+                if residual_result.status != "completed":
+                    return StageResult(
+                        status=StageStatus.FAILED,
+                        detail=residual_result.error_text or "vocal-residual lyric alignment failed",
+                    )
+                original = assign_word_timings(target_words, _observed_words(original_result))
+                residual = assign_word_timings(target_words, _observed_words(residual_result))
+                baseline_starts = current_starts
+                if min(original.coverage, residual.coverage) < MIN_EVIDENCE_COVERAGE:
+                    return StageResult(
+                        status=StageStatus.FAILED,
+                        detail=(
+                            "Lyric confidence audit did not match enough words "
+                            f"(original {original.coverage:.0%}, residual {residual.coverage:.0%}). "
+                            "The existing LRC was left unchanged."
+                        ),
+                    )
+            else:
+                original, residual, baseline_starts = reusable_evidence
 
-            target_words = [token.text for token in document.tokens]
-            original = assign_word_timings(target_words, _observed_words(original_result))
-            residual = assign_word_timings(target_words, _observed_words(residual_result))
-            if min(original.coverage, residual.coverage) < MIN_EVIDENCE_COVERAGE:
-                return StageResult(
-                    status=StageStatus.FAILED,
-                    detail=(
-                        "Lyric confidence audit did not match enough words "
-                        f"(original {original.coverage:.0%}, residual {residual.coverage:.0%}). "
-                        "The existing LRC was left unchanged."
-                    ),
+            if self._deep_review:
+                asr_result = _run_transcription(
+                    runner, self._venv_python, source_path, self._language,
+                    self._device, self._asr_model, ctx,
                 )
-            confidence = build_dual_audio_consensus(document, current_starts, original, residual)
+                if asr_result.status != "completed":
+                    return StageResult(
+                        status=StageStatus.FAILED,
+                        detail=asr_result.error_text or "independent ASR lyric review failed",
+                    )
+                asr_words = _observed_words(asr_result)
+                asr = (
+                    assign_word_timings(target_words, asr_words)
+                    if asr_words else TimingAssignment(
+                        starts=list(current_starts), matched=0,
+                        interpolated=len(current_starts), scores=[None] * len(current_starts),
+                    )
+                )
+                confidence = build_three_way_consensus(
+                    document, current_starts, original, residual, asr,
+                    baseline_starts=baseline_starts,
+                )
+            else:
+                asr = None
+                confidence = build_dual_audio_consensus(
+                    document, current_starts, original, residual,
+                    baseline_starts=baseline_starts,
+                )
             improved = document.render_enhanced(confidence.selected_starts)
         except (ValueError, KeyError, OSError, subprocess.CalledProcessError, FileNotFoundError) as exc:
             return StageResult(status=StageStatus.FAILED, detail=str(exc))
@@ -178,8 +217,14 @@ class ImproveLyricsStage:
             summary = write_lyric_timing_report(lrc_path, {
                 "quality": confidence.quality,
                 "engine": "whisperx",
-                "model": "wav2vec2-alignment",
-                "method": "dual_audio_consensus_v1",
+                "model": (
+                    f"wav2vec2-alignment+{self._asr_model}"
+                    if self._deep_review else "wav2vec2-alignment"
+                ),
+                "method": (
+                    "dual_audio_plus_asr_consensus_v2"
+                    if self._deep_review else "dual_audio_consensus_v1"
+                ),
                 "device": self._device,
                 "words": len(target_words),
                 "matched": min(original.matched, residual.matched),
@@ -194,6 +239,10 @@ class ImproveLyricsStage:
                 "review_lines": confidence.review_lines,
                 "agreement_within_0_25": confidence.agreement_within_0_25,
                 "median_agreement_seconds": confidence.median_agreement_seconds,
+                "asr_matched": asr.matched if asr is not None else None,
+                "asr_coverage": asr.coverage if asr is not None else None,
+                "asr_corroborated_words": confidence.asr_corroborated_words,
+                "large_shift_words": confidence.large_shift_words,
                 "attribution": "automatic",
                 "confirmed_by": None,
             }, confidence.word_details)
@@ -210,6 +259,11 @@ class ImproveLyricsStage:
                 f"confidence {summary['confidence_score']}/100 · corrected "
                 f"{confidence.corrected_words} word timings · {confidence.review_words} words in "
                 f"{confidence.review_lines} lines still need review"
+                + (
+                    f" · ASR corroborated {confidence.asr_corroborated_words} words"
+                    f" · {confidence.large_shift_words} large shifts kept for review"
+                    if self._deep_review else ""
+                )
             ),
         )
 
@@ -234,6 +288,72 @@ def _run_alignment(
         on_progress=ctx.on_progress,
         timeout_seconds=ALIGN_TIMEOUT_SECONDS,
     )
+
+
+def _run_transcription(
+    runner: Callable[..., WorkerResult],
+    venv_python: Path,
+    audio_path: Path,
+    language: str,
+    device: str,
+    asr_model: str,
+    ctx: StageContext,
+) -> WorkerResult:
+    return runner(
+        venv_python,
+        WHISPERX_SCRIPT,
+        {
+            "mode": "transcribe", "audio_path": str(audio_path),
+            "language": language, "device": device, "asr_model": asr_model,
+            "normalize_audio": True,
+        },
+        cancel_event=ctx.cancel_event,
+        on_progress=ctx.on_progress,
+        timeout_seconds=ALIGN_TIMEOUT_SECONDS,
+    )
+
+
+def _reusable_dual_evidence(
+    report: dict | None,
+    current_starts: list[float],
+) -> tuple[TimingAssignment, TimingAssignment, list[float]] | None:
+    if report is None:
+        return None
+    summary = report.get("summary", {})
+    if summary.get("method") not in {
+        "dual_audio_consensus_v1", "dual_audio_plus_asr_consensus_v2",
+    }:
+        return None
+    words = report.get("words", [])
+    if len(words) != len(current_starts):
+        return None
+    try:
+        if any(
+            abs(float(word.get("selected_seconds", current)) - current) > 0.02
+            for word, current in zip(words, current_starts, strict=True)
+        ):
+            return None
+        original_scores = [word.get("original_score") for word in words]
+        residual_scores = [word.get("residual_score") for word in words]
+        original = TimingAssignment(
+            starts=[float(word["original_seconds"]) for word in words],
+            matched=sum(score is not None for score in original_scores),
+            interpolated=sum(score is None for score in original_scores),
+            scores=original_scores,
+        )
+        residual = TimingAssignment(
+            starts=[float(word["residual_seconds"]) for word in words],
+            matched=sum(score is not None for score in residual_scores),
+            interpolated=sum(score is None for score in residual_scores),
+            scores=residual_scores,
+        )
+        baseline = [
+            float(word.get("baseline_seconds", word["previous_seconds"]))
+            for word in words
+        ]
+    except (KeyError, TypeError, ValueError):
+        return None
+    return original, residual, baseline
 
 
 def _observed_words(result: WorkerResult) -> list[ObservedWord]:

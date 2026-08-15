@@ -70,12 +70,13 @@ def portable_lyric_timing_provenance(provenance: dict) -> dict | None:
     for key in (
         "words", "matched", "interpolated", "low_confidence_words",
         "verified_words", "review_words", "corrected_words", "review_lines",
-        "agreement_within_0_25",
+        "agreement_within_0_25", "asr_matched", "asr_corroborated_words",
+        "large_shift_words",
     ):
         value = provenance.get(key)
         if value is not None and (not isinstance(value, int) or value < 0):
             return None
-    for key in ("coverage", "median_confidence"):
+    for key in ("coverage", "median_confidence", "asr_coverage"):
         value = provenance.get(key)
         if value is not None and (not isinstance(value, (int, float)) or not 0 <= float(value) <= 1):
             return None
@@ -97,6 +98,7 @@ def portable_lyric_timing_provenance(provenance: dict) -> dict | None:
             "interpolated", "coverage", "median_confidence", "low_confidence_words",
             "confidence_score", "verified_words", "review_words", "corrected_words",
             "review_lines", "agreement_within_0_25", "median_agreement_seconds",
+            "asr_matched", "asr_coverage", "asr_corroborated_words", "large_shift_words",
             "attribution", "confirmed_by", "recorded_at",
         )
     }

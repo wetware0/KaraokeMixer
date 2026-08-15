@@ -1,5 +1,5 @@
 from app.lyrics.alignment import AlignmentDocument, TimingAssignment
-from app.lyrics.confidence import build_dual_audio_consensus
+from app.lyrics.confidence import build_dual_audio_consensus, build_three_way_consensus
 
 
 def _assignment(starts, scores) -> TimingAssignment:
@@ -79,3 +79,68 @@ def test_perfect_high_confidence_evidence_can_be_automatically_high_quality():
     assert result.review_words == 0
     assert result.confidence_score >= 85
     assert result.quality == "high_quality"
+
+
+def test_asr_can_corroborate_original_when_residual_disagrees():
+    document = AlignmentDocument.parse("[00:01.00]<00:01.00>hello")
+
+    result = build_three_way_consensus(
+        document,
+        [1.0],
+        _assignment([1.4], [0.9]),
+        _assignment([2.4], [0.9]),
+        _assignment([1.44], [0.9]),
+    )
+
+    assert result.selected_starts == [1.42]
+    assert result.verified_words == 1
+    assert result.review_words == 0
+    assert result.asr_corroborated_words == 1
+    assert result.word_details[0]["correction_basis"] == "asr_corroborated_original"
+
+
+def test_asr_does_not_automatically_verify_a_large_repeated_phrase_jump():
+    document = AlignmentDocument.parse("[00:01.00]<00:01.00>hello")
+
+    result = build_three_way_consensus(
+        document,
+        [1.0],
+        _assignment([10.0], [0.9]),
+        _assignment([11.0], [0.9]),
+        _assignment([10.04], [0.9]),
+    )
+
+    assert result.review_words == 1
+    assert result.large_shift_words == 1
+    assert result.word_details[0]["correction_basis"] == "large_shift_review"
+
+
+def test_asr_interpolated_word_cannot_be_used_as_corroboration():
+    document = AlignmentDocument.parse("[00:01.00]<00:01.00>hello")
+
+    result = build_three_way_consensus(
+        document,
+        [1.0],
+        _assignment([1.4], [0.9]),
+        _assignment([2.4], [0.9]),
+        _assignment([1.42], [None]),
+    )
+
+    assert result.review_words == 1
+    assert result.asr_corroborated_words == 0
+
+
+def test_dual_agreement_applies_but_does_not_verify_a_large_shift():
+    document = AlignmentDocument.parse("[00:01.00]<00:01.00>hello")
+
+    result = build_dual_audio_consensus(
+        document,
+        [1.0],
+        _assignment([10.0], [0.9]),
+        _assignment([10.04], [0.9]),
+    )
+
+    assert result.selected_starts == [10.02]
+    assert result.review_words == 1
+    assert result.large_shift_words == 1
+    assert result.word_details[0]["correction_basis"] == "large_shift_review"

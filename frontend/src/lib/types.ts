@@ -55,6 +55,10 @@ export interface LyricTimingProvenance {
   review_lines?: number | null;
   agreement_within_0_25?: number | null;
   median_agreement_seconds?: number | null;
+  asr_matched?: number | null;
+  asr_coverage?: number | null;
+  asr_corroborated_words?: number | null;
+  large_shift_words?: number | null;
   attribution: "automatic" | "manual";
   confirmed_by: string | null;
   recorded_at: string;
@@ -259,15 +263,18 @@ export interface LyricTimingWordDetail {
   word_index: number;
   word: string;
   previous_seconds: number;
+  baseline_seconds?: number;
   selected_seconds: number;
   original_seconds: number;
   residual_seconds: number;
   agreement_seconds: number;
   original_score: number | null;
   residual_score: number | null;
+  asr_seconds?: number;
+  asr_score?: number | null;
   confidence: number;
   status: "verified" | "review";
-  correction_basis?: "verified_agreement" | "gross_directional" | "retained_existing";
+  correction_basis?: "verified_agreement" | "asr_corroborated_original" | "asr_corroborated_residual" | "large_shift_review" | "gross_directional" | "retained_existing";
   corrected: boolean;
 }
 
