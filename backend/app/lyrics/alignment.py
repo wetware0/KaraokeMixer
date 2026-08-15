@@ -103,7 +103,14 @@ class AlignmentDocument:
             tokens = line.tokens
             line_timings = timings[timing_index:timing_index + len(tokens)]
             timing_index += len(tokens)
-            prefix_time = line_timings[0] if line_timings else (line.line_start or 0.0)
+            # A karaoke line cue is an independent, movable marker. Preserve
+            # a provider/editor line start instead of collapsing it onto the
+            # first aligned word; singers need that lead-in before the first
+            # syllable highlights. A full timing reset has no old line start,
+            # so its new cue begins at the first generated word.
+            prefix_time = line.line_start if line.line_start is not None else (
+                line_timings[0] if line_timings else 0.0
+            )
             parts = [f"[{format_timestamp(prefix_time)}]"]
             cursor = 0
             for token, start in zip(tokens, line_timings, strict=True):
@@ -131,6 +138,7 @@ class TimingAssignment:
     starts: list[float]
     matched: int
     interpolated: int
+    scores: list[float | None]
 
     @property
     def coverage(self) -> float:
@@ -143,7 +151,7 @@ def assign_word_timings(target_words: list[str], observed_words: list[ObservedWo
     sequence matching, interpolating any gaps. Pure Python, no torch -
     ported from VoiceTiming/src/vocal_timing/lrc.py::assign_word_timings."""
     if not target_words:
-        return TimingAssignment([], 0, 0)
+        return TimingAssignment([], 0, 0, [])
     if not observed_words:
         raise ValueError("The aligner returned no word timings")
 
@@ -151,12 +159,14 @@ def assign_word_timings(target_words: list[str], observed_words: list[ObservedWo
     observed_norm = [_normalize_word(word.text) for word in observed_words]
     matcher = SequenceMatcher(None, target_norm, observed_norm, autojunk=False)
     starts: list[float | None] = [None] * len(target_words)
+    scores: list[float | None] = [None] * len(target_words)
     matched = 0
 
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
             for target_index, observed_index in zip(range(i1, i2), range(j1, j2)):
                 starts[target_index] = observed_words[observed_index].start
+                scores[target_index] = observed_words[observed_index].score
                 matched += 1
         elif tag == "replace":
             available = set(range(j1, j2))
@@ -170,12 +180,13 @@ def assign_word_timings(target_words: list[str], observed_words: list[ObservedWo
                     None, target_norm[target_index], observed_norm[best]
                 ).ratio() >= 0.72:
                     starts[target_index] = observed_words[best].start
+                    scores[target_index] = observed_words[best].score
                     matched += 1
                     available.remove(best)
 
     _interpolate_missing(starts, observed_words)
     monotonic = _make_monotonic([float(value) for value in starts])
-    return TimingAssignment(monotonic, matched, len(target_words) - matched)
+    return TimingAssignment(monotonic, matched, len(target_words) - matched, scores)
 
 
 def line_timed_segments(document: AlignmentDocument, duration: float) -> list[dict]:

@@ -283,6 +283,16 @@ export async function saveLrc(
   return (await response.json()) as LrcWriteResponse;
 }
 
+export async function confirmLyricTimingQuality(trackId: number): Promise<Track> {
+  const response = await fetch(`${BASE}/tracks/${trackId}/lrc/confirm-quality`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmed_by: "user" }),
+  });
+  if (!response.ok) throw new Error(await errorMessage(response, "Failed to confirm lyric timing quality"));
+  return (await response.json()) as Track;
+}
+
 export function artworkUrl(trackId: number): string {
   return `${BASE}/tracks/${trackId}/artwork`;
 }

@@ -10,6 +10,7 @@
     onLineClick = () => {},
     breakLabel = undefined,
     onRemoveBreak = undefined,
+    wordConfidence = {},
   }: {
     model: LrcModel;
     currentTime: number;
@@ -27,6 +28,9 @@
      * the break label that calls this with the line's index. Omitted (the
      * default) hides the control - e.g. the Mixer never passes it. */
     onRemoveBreak?: (lineIndex: number) => void;
+    /** Per-word evidence score keyed as "lineIndex:wordIndex". Scores below
+     * 60 are softly marked for focused review in the lyric editor. */
+    wordConfidence?: Record<string, number>;
   } = $props();
 
   const active = $derived(findActiveWord(model, currentTime));
@@ -85,6 +89,10 @@
             class="karaoke-word"
             class:karaoke-word-active={active?.lineIndex === lineIndex && active?.wordIndex === wordIndex}
             class:karaoke-word-selected={selectedWord?.lineIndex === lineIndex && selectedWord?.wordIndex === wordIndex}
+            class:karaoke-word-review={(wordConfidence[`${lineIndex}:${wordIndex}`] ?? 100) < 60}
+            title={wordConfidence[`${lineIndex}:${wordIndex}`] === undefined
+              ? undefined
+              : `Timing confidence ${wordConfidence[`${lineIndex}:${wordIndex}`]}/100`}
             onclick={() => onWordClick({ lineIndex, wordIndex })}
           >{word.text}</button>
         {/each}

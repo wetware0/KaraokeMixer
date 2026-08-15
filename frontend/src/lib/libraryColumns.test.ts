@@ -384,6 +384,47 @@ describe("filterTracks", () => {
     expect(filterTracks([...tracks, fast, high, unknown], state).map((item) => item.id)).toEqual([5]);
   });
 
+  it("distinguishes High Quality lyric timing from unreviewed enhanced markers", () => {
+    const enhanced = track({ id: 3, lrc_state: "enhanced", outputs: { ...track().outputs, lrc: true } });
+    const high = track({
+      id: 4,
+      lrc_state: "enhanced",
+      outputs: { ...track().outputs, lrc: true },
+      lyric_timing_provenance: {
+        schema_version: 1, part: "lyrics", quality: "high_quality", timing_state: "enhanced",
+        lrc_sha256: "a".repeat(64), engine: "human_review", model: "manual",
+        method: "listening_review", device: null, words: null, matched: null,
+        interpolated: null, coverage: null, median_confidence: null,
+        low_confidence_words: null, attribution: "manual", confirmed_by: "user",
+        recorded_at: "2026-08-15T00:00:00Z",
+      },
+    });
+    expect(displayValue(enhanced, "lyrics")).toBe("Needs review");
+    expect(displayValue(high, "lyrics")).toBe("High Quality");
+
+    const state = defaultLibraryColumnsState();
+    const lyrics = state.columns.find((column) => column.key === "lyrics")!;
+    lyrics.filter = "high_quality";
+    expect(filterTracks([enhanced, high], state).map((item) => item.id)).toEqual([4]);
+    lyrics.filter = "review";
+    expect(filterTracks([enhanced, high], state).map((item) => item.id)).toEqual([3]);
+
+    const audited = track({
+      ...enhanced,
+      id: 5,
+      lyric_timing_provenance: {
+        ...high.lyric_timing_provenance!, quality: "review", attribution: "automatic",
+        confirmed_by: null, confidence_score: 82, verified_words: 90,
+        review_words: 10, corrected_words: 45, review_lines: 4,
+      },
+    });
+    expect(displayValue(audited, "lyrics")).toBe("Review 82/100");
+    lyrics.filter = "audited";
+    expect(filterTracks([enhanced, high, audited], state).map((item) => item.id)).toEqual([5]);
+    lyrics.filter = "not_audited";
+    expect(filterTracks([enhanced, high, audited], state).map((item) => item.id)).toEqual([3, 4]);
+  });
+
   it("filters artwork presence and combines it with another heading", () => {
     const withArtwork = track({ id: 3, artist: "ABBA", has_artwork: true });
     const missingArtwork = track({ id: 4, artist: "Queen", has_artwork: false });

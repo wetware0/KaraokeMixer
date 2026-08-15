@@ -32,6 +32,34 @@ export interface InstrumentalProvenance {
 
 export type LrcState = "enhanced" | "line_timed" | "untimed" | "empty" | "unknown";
 
+export interface LyricTimingProvenance {
+  schema_version: number;
+  part: "lyrics";
+  quality: "review" | "high_quality";
+  timing_state: "enhanced";
+  lrc_sha256: string;
+  engine: string | null;
+  model: string | null;
+  method: string | null;
+  device: string | null;
+  words: number | null;
+  matched: number | null;
+  interpolated: number | null;
+  coverage: number | null;
+  median_confidence: number | null;
+  low_confidence_words: number | null;
+  confidence_score?: number | null;
+  verified_words?: number | null;
+  review_words?: number | null;
+  corrected_words?: number | null;
+  review_lines?: number | null;
+  agreement_within_0_25?: number | null;
+  median_agreement_seconds?: number | null;
+  attribution: "automatic" | "manual";
+  confirmed_by: string | null;
+  recorded_at: string;
+}
+
 export interface Track {
   id: number;
   media_root: string;
@@ -46,6 +74,7 @@ export interface Track {
   duration_seconds: number | null;
   has_artwork?: boolean | null;
   instrumental_provenance?: InstrumentalProvenance | null;
+  lyric_timing_provenance?: LyricTimingProvenance | null;
 }
 
 export interface LibraryFolder {
@@ -221,6 +250,30 @@ export interface LrcReadResponse {
   exists: boolean;
   content: string;
   state: LrcState | null;
+  timing_report?: LyricTimingReport | null;
+}
+
+export interface LyricTimingWordDetail {
+  word_number: number;
+  line_index: number;
+  word_index: number;
+  word: string;
+  previous_seconds: number;
+  selected_seconds: number;
+  original_seconds: number;
+  residual_seconds: number;
+  agreement_seconds: number;
+  original_score: number | null;
+  residual_score: number | null;
+  confidence: number;
+  status: "verified" | "review";
+  correction_basis?: "verified_agreement" | "gross_directional" | "retained_existing";
+  corrected: boolean;
+}
+
+export interface LyricTimingReport {
+  summary: LyricTimingProvenance;
+  words: LyricTimingWordDetail[];
 }
 
 export interface LrcWriteResponse {

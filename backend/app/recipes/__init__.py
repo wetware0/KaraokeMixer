@@ -9,5 +9,6 @@ from . import youtube_import  # noqa: F401  imported for its registration side e
 from . import fetch_tags  # noqa: F401  imported for its registration side effect
 from . import full_prep  # noqa: F401  imported for its registration side effect
 from . import align_only  # noqa: F401  imported for its registration side effect
+from . import improve_lyrics  # noqa: F401  imported for its registration side effect
 
 __all__ = ["REGISTRY", "RecipeDefinition", "register"]

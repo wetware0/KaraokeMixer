@@ -32,6 +32,28 @@ export function instrumentalProvenanceTitle(track: Track): string {
   return `${instrumentalQualityLabel(track) ?? "Ready"} · ${engine} · ${model}${device}${job} · ${attribution}`;
 }
 
+export function lyricTimingTitle(track: Track): string {
+  if (!track.lrc_state) return "No lyrics";
+  if (track.lrc_state !== "enhanced") return displayValue(track, "lyrics");
+  const provenance = track.lyric_timing_provenance;
+  if (provenance?.quality === "high_quality") {
+    return provenance.attribution === "manual"
+      ? `High Quality timing · listening review confirmed by ${provenance.confirmed_by ?? "user"}`
+      : "High Quality timing · independently verified";
+  }
+  if (!provenance) return "Enhanced word markers · timing has not been quality reviewed";
+  if (provenance.confidence_score != null) {
+    const verified = provenance.verified_words ?? 0;
+    const review = provenance.review_words ?? 0;
+    const lines = provenance.review_lines ?? 0;
+    const corrected = provenance.corrected_words ?? 0;
+    return `Confidence ${provenance.confidence_score}/100 · ${verified} verified · ${review} words in ${lines} lines need review · ${corrected} corrected`;
+  }
+  const coverage = provenance.coverage == null ? "" : ` · ${Math.round(provenance.coverage * 100)}% matched`;
+  const confidence = provenance.median_confidence == null ? "" : ` · median confidence ${provenance.median_confidence.toFixed(2)}`;
+  return `Enhanced timing needs listening review${coverage}${confidence}`;
+}
+
 export const LIBRARY_COLUMNS_STORAGE_KEY = "karaoke-mm.libraryColumns";
 const LIBRARY_COLUMNS_SCHEMA_VERSION = 5;
 export const MIN_LIBRARY_COLUMN_WIDTH = 64;
@@ -237,6 +259,11 @@ export function displayValue(track: Track, key: LibraryColumnKey): string {
     case "instrumental": return track.outputs.instrumental ? (instrumentalQualityLabel(track) ?? "Ready") : "Missing";
     case "lyrics": {
       if (!track.lrc_state) return "Missing";
+      if (track.lrc_state === "enhanced") {
+        if (track.lyric_timing_provenance?.quality === "high_quality") return "High Quality";
+        const score = track.lyric_timing_provenance?.confidence_score;
+        return score == null ? "Needs review" : `Review ${score}/100`;
+      }
       const label = track.lrc_state.replace("_", " ");
       return `${label[0].toUpperCase()}${label.slice(1)}`;
     }
@@ -287,6 +314,16 @@ function matchesColumnFilter(track: Track, key: LibraryColumnKey, rawFilter: str
   }
   if (key === "lyrics") {
     if (filter === "missing") return track.lrc_state == null;
+    if (filter === "high_quality") {
+      return track.lrc_state === "enhanced" && track.lyric_timing_provenance?.quality === "high_quality";
+    }
+    if (filter === "review") {
+      return track.lrc_state === "enhanced" && track.lyric_timing_provenance?.quality !== "high_quality";
+    }
+    if (filter === "audited") return track.lyric_timing_provenance?.confidence_score != null;
+    if (filter === "not_audited") {
+      return track.lrc_state === "enhanced" && track.lyric_timing_provenance?.confidence_score == null;
+    }
     return track.lrc_state === filter;
   }
   if (key === "stems") {

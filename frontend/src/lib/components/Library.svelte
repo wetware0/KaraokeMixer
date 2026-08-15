@@ -298,7 +298,11 @@
     ];
     if (key === "lyrics") return [
       { value: "", label: "All" },
-      { value: "enhanced", label: "Enhanced" },
+      { value: "high_quality", label: "High Quality timing" },
+      { value: "review", label: "Needs review" },
+      { value: "audited", label: "Confidence checked" },
+      { value: "not_audited", label: "Not confidence checked" },
+      { value: "enhanced", label: "All enhanced" },
       { value: "line_timed", label: "Line timed" },
       { value: "untimed", label: "Untimed" },
       { value: "empty", label: "Empty" },

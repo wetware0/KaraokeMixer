@@ -7,10 +7,11 @@ import * as waveform from "../audio/waveform";
 import { TAP_OFFSET_STORAGE_KEY } from "../tapOffsetStore";
 import type { Track } from "../types";
 
-const { mockSaveLrc, mockSubmitJob, mockFetchJob, completionCallbacks, backgroundCompletionCallbacks } = vi.hoisted(() => ({
+const { mockSaveLrc, mockSubmitJob, mockFetchJob, mockConfirmLyricTimingQuality, completionCallbacks, backgroundCompletionCallbacks } = vi.hoisted(() => ({
   mockSaveLrc: vi.fn().mockResolvedValue({ path: "D:/Media/Song.lrc" }),
   mockSubmitJob: vi.fn().mockResolvedValue({ job_id: 42 }),
   mockFetchJob: vi.fn().mockResolvedValue({ id: 42, status: "running", items: [] }),
+  mockConfirmLyricTimingQuality: vi.fn(),
   completionCallbacks: new Map<number, () => void>(),
   backgroundCompletionCallbacks: new Set<(jobIds: readonly number[]) => void>(),
 }));
@@ -25,6 +26,7 @@ vi.mock("../api", () => ({
   saveLrc: mockSaveLrc,
   submitJob: mockSubmitJob,
   fetchJob: mockFetchJob,
+  confirmLyricTimingQuality: mockConfirmLyricTimingQuality,
 }));
 
 vi.mock("../jobsStore.svelte", () => ({
@@ -83,6 +85,41 @@ async function renderEditor(whisperxAvailable: boolean | null = null, overrides:
 }
 
 describe("LyricEditor", () => {
+  it("requires confirmation before marking enhanced timing High Quality", async () => {
+    const enhancedTrack = { ...track, lrc_state: "enhanced" as const };
+    mockConfirmLyricTimingQuality.mockResolvedValueOnce({
+      ...enhancedTrack,
+      lyric_timing_provenance: {
+        schema_version: 1,
+        part: "lyrics",
+        quality: "high_quality",
+        timing_state: "enhanced",
+        lrc_sha256: "abc",
+        engine: "manual_review",
+        model: null,
+        method: "listen_through",
+        device: null,
+        words: 2,
+        matched: 2,
+        interpolated: 0,
+        coverage: 1,
+        median_confidence: null,
+        low_confidence_words: 0,
+        attribution: "manual",
+        confirmed_by: "user",
+        recorded_at: "2026-08-15T00:00:00Z",
+      },
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await renderEditor(null, { track: enhancedTrack });
+
+    await fireEvent.click(screen.getByText("Confirm High Quality timing"));
+
+    await waitFor(() => expect(mockConfirmLyricTimingQuality).toHaveBeenCalledWith(1));
+    expect(screen.getByText("High Quality timing ✓")).toBeTruthy();
+    expect(screen.getByText(/recorded for this exact LRC file/)).toBeTruthy();
+  });
+
   it("reloads changed lyrics when another background job completes for the open track", async () => {
     await renderEditor();
     mockFetchJob.mockResolvedValueOnce({
@@ -97,6 +134,41 @@ describe("LyricEditor", () => {
     await waitFor(() => expect(screen.getByText("Fresh")).toBeTruthy());
     expect(screen.getByText(/Lyrics refreshed after background processing completed/)).toBeTruthy();
     expect(vi.mocked(fetchLrc)).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes a new confidence report even when no word timestamp changed", async () => {
+    await renderEditor();
+    mockFetchJob.mockResolvedValueOnce({
+      id: 80, recipe: "improve_lyrics", status: "completed", items: [{ track_id: 1 }],
+    });
+    vi.mocked(fetchLrc).mockResolvedValueOnce({
+      exists: true,
+      content: "Hi there\n",
+      state: "untimed",
+      timing_report: {
+        summary: {
+          schema_version: 2, part: "lyrics", quality: "review", timing_state: "enhanced",
+          lrc_sha256: "a".repeat(64), engine: "whisperx", model: "align",
+          method: "dual_audio_consensus_v1", device: "cuda", words: 2, matched: 2,
+          interpolated: 0, coverage: 1, median_confidence: 0.81,
+          low_confidence_words: 1, confidence_score: 81, verified_words: 1,
+          review_words: 1, corrected_words: 0, review_lines: 1,
+          attribution: "automatic", confirmed_by: null, recorded_at: "2026-08-15T00:00:00Z",
+        },
+        words: [{
+          word_number: 1, line_index: 0, word_index: 0, word: "Hi",
+          previous_seconds: 0, selected_seconds: 0, original_seconds: 0,
+          residual_seconds: 1, agreement_seconds: 1, original_score: 0.5,
+          residual_score: 0.5, confidence: 42, status: "review", corrected: false,
+        }],
+      },
+    });
+
+    backgroundCompletionCallbacks.forEach((callback) => callback([80]));
+
+    await waitFor(() => expect(screen.getByText(/Confidence 81\/100/)).toBeTruthy());
+    expect(screen.getByText("Hi").className).toContain("karaoke-word-review");
+    expect(screen.getByText(/confidence refreshed after background processing completed/)).toBeTruthy();
   });
 
   it("ignores background jobs for a different track", async () => {

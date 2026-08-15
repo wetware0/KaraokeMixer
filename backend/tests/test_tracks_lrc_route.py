@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from tests.scan_test_helpers import run_rescan
 from app.pipeline import atomic_publish
+from app.lyrics.provenance import lyric_timing_sidecar_path, write_lyric_timing_report
 
 
 def _seed_track(tmp_path, lrc_content: str | None = None) -> TestClient:
@@ -76,7 +77,29 @@ def test_get_lrc_returns_exists_false_when_no_lrc_resolves(tmp_path):
 
     assert response.status_code == 200
     body = response.json()
-    assert body == {"exists": False, "content": "", "state": None}
+    assert body == {"exists": False, "content": "", "state": None, "timing_report": None}
+
+
+def test_get_lrc_returns_hash_bound_timing_report(tmp_path):
+    content = "[00:01.00]<00:01.00>Hello <00:01.50>world\n"
+    client = _seed_track(tmp_path, lrc_content=content)
+    lrc_path = tmp_path / "Media" / "Song.lrc"
+    write_lyric_timing_report(lrc_path, {
+        "quality": "review", "engine": "whisperx", "model": "align",
+        "method": "dual_audio_consensus_v1", "device": "cuda",
+        "confidence_score": 84, "verified_words": 1, "review_words": 1,
+        "corrected_words": 1, "review_lines": 1, "agreement_within_0_25": 1,
+        "median_agreement_seconds": 0.08, "attribution": "automatic",
+        "confirmed_by": None,
+    }, [{
+        "line_index": 0, "word_index": 1, "word": "world", "confidence": 42,
+        "status": "review", "corrected": False,
+    }])
+
+    body = client.get("/api/tracks/1/lrc").json()
+
+    assert body["timing_report"]["summary"]["confidence_score"] == 84
+    assert body["timing_report"]["words"][0]["word"] == "world"
 
 
 def test_get_lrc_returns_404_for_unknown_track(tmp_path):
@@ -131,6 +154,45 @@ def test_put_lrc_immediately_publishes_enhanced_state_to_the_library(tmp_path):
     listed_track = client.get("/api/tracks").json()["tracks"][0]
     assert listed_track["outputs"]["lrc"] is True
     assert listed_track["lrc_state"] == "enhanced"
+
+
+def test_confirm_high_quality_timing_is_persisted_and_an_edit_invalidates_it(tmp_path):
+    client = _seed_track(tmp_path, lrc_content="[00:01.00]<00:01.00>Hello <00:01.50>world\n")
+
+    confirmed = client.post(
+        "/api/tracks/1/lrc/confirm-quality",
+        json={"confirmed_by": "Peter"},
+    )
+
+    assert confirmed.status_code == 200
+    provenance = confirmed.json()["lyric_timing_provenance"]
+    assert provenance["quality"] == "high_quality"
+    assert provenance["attribution"] == "manual"
+    assert provenance["confirmed_by"] == "Peter"
+    lrc_path = tmp_path / "Media" / "Song.lrc"
+    assert lyric_timing_sidecar_path(lrc_path).exists()
+    assert client.get("/api/tracks").json()["tracks"][0]["lyric_timing_provenance"] == provenance
+
+    saved = client.put(
+        "/api/tracks/1/lrc",
+        json={"content": "[00:02.00]<00:02.00>Changed\n"},
+    )
+
+    assert saved.status_code == 200
+    assert saved.json()["track"]["lyric_timing_provenance"] is None
+    assert not lyric_timing_sidecar_path(lrc_path).exists()
+
+
+def test_confirm_high_quality_timing_requires_enhanced_words(tmp_path):
+    client = _seed_track(tmp_path, lrc_content="[00:01.00]Line timed only\n")
+
+    response = client.post(
+        "/api/tracks/1/lrc/confirm-quality",
+        json={"confirmed_by": "Peter"},
+    )
+
+    assert response.status_code == 409
+    assert "enhanced" in response.json()["detail"]
 
 
 def test_put_lrc_without_existing_file_and_no_create_flag_returns_409(tmp_path):

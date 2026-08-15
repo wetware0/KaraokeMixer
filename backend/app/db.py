@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     duration_seconds REAL,
     has_artwork INTEGER,
     instrumental_provenance_json TEXT,
+    lyric_timing_provenance_json TEXT,
     UNIQUE(media_root, relative_path)
 );
 
@@ -126,6 +127,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         _add_column_if_missing(conn, "tracks", "duration_seconds", "REAL")
         _add_column_if_missing(conn, "tracks", "has_artwork", "INTEGER")
         _add_column_if_missing(conn, "tracks", "instrumental_provenance_json", "TEXT")
+        _add_column_if_missing(conn, "tracks", "lyric_timing_provenance_json", "TEXT")
     _run_instrumental_provenance_backfill_migration(conn)
     _run_instrumental_provenance_tag_migration(conn)
 
@@ -344,6 +346,7 @@ def replace_tracks(conn: sqlite3.Connection, media_root: str, tracks: list) -> N
                 _instrumental_provenance_for_scan(
                     existing_provenance_by_relative_path.get(track.relative_path), track
                 ),
+                json.dumps(track.lyric_timing_provenance) if getattr(track, "lyric_timing_provenance", None) else None,
             )
             existing_id = existing_by_relative_path.get(track.relative_path)
             if existing_id is None:
@@ -354,8 +357,8 @@ def replace_tracks(conn: sqlite3.Connection, media_root: str, tracks: list) -> N
                         has_instrumental, has_vocals, has_lead_vocals, has_backing_vocals,
                         has_drums, has_bass, has_guitar, has_piano, has_other, has_lrc,
                         lrc_state, stem_count, last_scanned_at, album, year, duration_seconds, has_artwork,
-                        instrumental_provenance_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        instrumental_provenance_json, lyric_timing_provenance_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     values,
                 )
@@ -369,7 +372,7 @@ def replace_tracks(conn: sqlite3.Connection, media_root: str, tracks: list) -> N
                         has_drums = ?, has_bass = ?, has_guitar = ?, has_piano = ?, has_other = ?, has_lrc = ?,
                         lrc_state = ?, stem_count = ?, last_scanned_at = ?, album = ?, year = ?, duration_seconds = ?,
                         has_artwork = ?,
-                        instrumental_provenance_json = ?
+                        instrumental_provenance_json = ?, lyric_timing_provenance_json = ?
                     WHERE id = ?
                     """,
                     (*values, existing_id),
@@ -452,6 +455,7 @@ def upsert_track_scan_batch(
                 _instrumental_provenance_for_scan(
                     existing_provenance_by_relative_path.get(track.relative_path), track
                 ),
+                json.dumps(track.lyric_timing_provenance) if getattr(track, "lyric_timing_provenance", None) else None,
             )
             existing_id = existing_by_relative_path.get(track.relative_path)
             if existing_id is None:
@@ -462,8 +466,8 @@ def upsert_track_scan_batch(
                         has_instrumental, has_vocals, has_lead_vocals, has_backing_vocals,
                         has_drums, has_bass, has_guitar, has_piano, has_other, has_lrc,
                         lrc_state, stem_count, last_scanned_at, album, year, duration_seconds, has_artwork,
-                        instrumental_provenance_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        instrumental_provenance_json, lyric_timing_provenance_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     values,
                 )
@@ -476,7 +480,7 @@ def upsert_track_scan_batch(
                         has_drums = ?, has_bass = ?, has_guitar = ?, has_piano = ?, has_other = ?, has_lrc = ?,
                         lrc_state = ?, stem_count = ?, last_scanned_at = ?, album = ?, year = ?, duration_seconds = ?,
                         has_artwork = ?,
-                        instrumental_provenance_json = ?
+                        instrumental_provenance_json = ?, lyric_timing_provenance_json = ?
                     WHERE id = ?
                     """,
                     (*values, existing_id),
@@ -552,6 +556,14 @@ def _row_to_track(row: sqlite3.Row) -> dict:
                 }
         except (TypeError, json.JSONDecodeError):
             provenance = None
+    lyric_timing_provenance = None
+    if row["lyric_timing_provenance_json"]:
+        try:
+            decoded = json.loads(row["lyric_timing_provenance_json"])
+            if isinstance(decoded, dict):
+                lyric_timing_provenance = decoded
+        except (TypeError, json.JSONDecodeError):
+            lyric_timing_provenance = None
     return {
         "id": row["id"],
         "media_root": row["media_root"],
@@ -577,6 +589,7 @@ def _row_to_track(row: sqlite3.Row) -> dict:
         "duration_seconds": row["duration_seconds"],
         "has_artwork": None if row["has_artwork"] is None else bool(row["has_artwork"]),
         "instrumental_provenance": provenance,
+        "lyric_timing_provenance": lyric_timing_provenance,
     }
 
 
@@ -1144,7 +1157,12 @@ def update_track_artwork_state(
     return get_track(conn, track_id)
 
 
-def update_track_lrc_state(conn: sqlite3.Connection, track_id: int, lrc_state: str | None) -> dict | None:
+def update_track_lrc_state(
+    conn: sqlite3.Connection,
+    track_id: int,
+    lrc_state: str | None,
+    lyric_timing_provenance: dict | None = None,
+) -> dict | None:
     """Publish a canonical lyric save to the library row immediately.
 
     A lyric edit changes only the two lyric-derived columns, so making the
@@ -1154,8 +1172,14 @@ def update_track_lrc_state(conn: sqlite3.Connection, track_id: int, lrc_state: s
     """
     with _write_lock, conn:
         conn.execute(
-            "UPDATE tracks SET has_lrc = ?, lrc_state = ? WHERE id = ?",
-            (int(lrc_state is not None), lrc_state, track_id),
+            """UPDATE tracks
+               SET has_lrc = ?, lrc_state = ?, lyric_timing_provenance_json = ?
+               WHERE id = ?""",
+            (
+                int(lrc_state is not None), lrc_state,
+                json.dumps(lyric_timing_provenance) if lyric_timing_provenance else None,
+                track_id,
+            ),
         )
         row = conn.execute("SELECT * FROM tracks WHERE id = ?", (track_id,)).fetchone()
     return _row_to_track(row) if row is not None else None
@@ -1166,6 +1190,7 @@ def update_track_outputs(
     track_id: int,
     outputs: TrackOutputs,
     lrc_state: str | None,
+    lyric_timing_provenance: dict | None = None,
 ) -> dict | None:
     """Publish one processing result to its existing catalogue row.
 
@@ -1187,7 +1212,8 @@ def update_track_outputs(
                 lrc_state = ?, stem_count = ?,
                 instrumental_provenance_json = CASE
                     WHEN ? THEN instrumental_provenance_json ELSE NULL
-                END
+                END,
+                lyric_timing_provenance_json = ?
             WHERE id = ?
             """,
             (
@@ -1195,7 +1221,9 @@ def update_track_outputs(
                 int(outputs.lead_vocals), int(outputs.backing_vocals),
                 int(outputs.drums), int(outputs.bass), int(outputs.guitar),
                 int(outputs.piano), int(outputs.other), int(outputs.lrc),
-                lrc_state, stem_count, int(outputs.instrumental), track_id,
+                lrc_state, stem_count, int(outputs.instrumental),
+                json.dumps(lyric_timing_provenance) if lyric_timing_provenance else None,
+                track_id,
             ),
         )
         row = conn.execute("SELECT * FROM tracks WHERE id = ?", (track_id,)).fetchone()
