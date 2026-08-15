@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+from mutagen.id3 import ID3, TIT2, TXXX
+
 from app.db import (
     backfill_known_instrumental_provenance,
     confirm_instrumental_quality_for_artists,
@@ -15,7 +17,13 @@ from app.db import (
     replace_tracks,
     set_item_stages,
 )
-from app.instrumental_provenance import build_instrumental_provenance
+from app.instrumental_provenance import (
+    PROVENANCE_TAG_DESCRIPTION,
+    build_instrumental_provenance,
+    read_instrumental_provenance_tag,
+    write_instrumental_provenance_tag,
+)
+from app.scanner import scan_media_root
 
 
 def _track(source_path: Path, output_path: Path | None, *, artist: str = "Artist") -> SimpleNamespace:
@@ -91,6 +99,69 @@ def test_recorded_provenance_is_returned_with_the_track_and_survives_an_unchange
     assert stored["output_mtime_ns"] == output.stat().st_mtime_ns
 
 
+def test_recorded_provenance_is_embedded_and_recovers_in_a_fresh_catalogue(tmp_path):
+    source, output = _files(tmp_path)
+    conn = get_connection(tmp_path / "library.db")
+    replace_tracks(conn, str(tmp_path), [_track(source, output)])
+    track_id = list_tracks(conn)[0]["id"]
+    job_id = create_job(conn, "karaoke", {}, [{"track_id": track_id, "source_path": str(source)}])
+    item_id = get_job(conn, job_id)["items"][0]["id"]
+    base = build_instrumental_provenance(
+        {"processing_profile": "balanced", "device": "cuda"},
+        output,
+        engine="demucs",
+        model="htdemucs",
+        backing_vocal_mode="stripped",
+    )
+
+    record_instrumental_provenance(
+        conn, track_id, job_id, item_id, "karaoke_instrumental", base
+    )
+
+    embedded = read_instrumental_provenance_tag(output)
+    assert embedded is not None
+    assert embedded["quality"] == "balanced"
+    assert embedded["engine"] == "demucs"
+    assert embedded["stage"] == "karaoke_instrumental"
+    assert "output_path" not in embedded
+    assert "job_id" not in embedded
+
+    fresh = get_connection(tmp_path / "fresh-library.db")
+    replace_tracks(fresh, str(tmp_path), scan_media_root(tmp_path, []))
+    reimported = list_tracks(fresh)[0]
+    assert reimported["instrumental_provenance"]["quality"] == "balanced"
+    assert reimported["instrumental_provenance"]["engine"] == "demucs"
+    assert reimported["instrumental_provenance"]["job_id"] is None
+
+
+def test_provenance_tag_preserves_existing_metadata_and_rejects_invalid_payload(tmp_path):
+    _source, output = _files(tmp_path)
+    tags = ID3()
+    tags.add(TIT2(encoding=3, text=["Existing title"]))
+    tags.save(output)
+    provenance = build_instrumental_provenance(
+        {"processing_profile": "fast", "device": "cpu"},
+        output,
+        engine="demucs",
+        model="mdx",
+        backing_vocal_mode="stripped",
+    )
+
+    assert write_instrumental_provenance_tag(output, provenance) is True
+    assert ID3(output).get("TIT2").text == ["Existing title"]
+    assert write_instrumental_provenance_tag(output, provenance) is False
+
+    tags = ID3(output)
+    tags.delall(f"TXXX:{PROVENANCE_TAG_DESCRIPTION}")
+    tags.add(TXXX(
+        encoding=3,
+        desc=PROVENANCE_TAG_DESCRIPTION,
+        text=['{"schema_version":1,"part":"instrumental","quality":"invented"}'],
+    ))
+    tags.save(output)
+    assert read_instrumental_provenance_tag(output) is None
+
+
 def test_rescan_clears_provenance_when_the_instrumental_was_replaced_or_removed(tmp_path):
     source, output = _files(tmp_path)
     conn = get_connection(tmp_path / "library.db")
@@ -140,6 +211,9 @@ def test_startup_transformation_attributes_only_a_timestamp_matching_known_outpu
         "finished_at": completed_at.isoformat(),
         "error": None,
     }])
+    # A remove/reimport can assign a different track id. Recovery must match
+    # the durable source path in job history rather than the stale id.
+    conn.execute("UPDATE job_items SET track_id = -1 WHERE id = ?", (item["id"],))
     # Simulate upgrading a database which has not run this transformation.
     conn.execute("DELETE FROM app_migrations WHERE name = '2026-08-10-instrumental-provenance-v1'")
     conn.commit()
@@ -214,10 +288,19 @@ def test_manual_artist_confirmation_is_exact_audited_and_signature_bound(tmp_pat
     assert tracks["Queen"]["instrumental_provenance"]["confirmed_by"] == "Peter"
     assert tracks["Queen"]["instrumental_provenance"]["job_id"] is None
     assert tracks["Black Sabbath"]["instrumental_provenance"] is None
+    assert read_instrumental_provenance_tag(
+        media_root / "Dancing Queen.instrumental.mp3"
+    )["quality"] == "high_quality"
     audit = json.loads(conn.execute(
         "SELECT detail_json FROM app_migrations WHERE name = 'test-manual-quality'"
     ).fetchone()["detail_json"])
     assert audit == detail
+
+    fresh = get_connection(tmp_path / "fresh-library.db")
+    replace_tracks(fresh, str(media_root), scan_media_root(media_root, []))
+    fresh_tracks = {track["relative_path"]: track for track in list_tracks(fresh)}
+    assert fresh_tracks["Dancing Queen.flac"]["instrumental_provenance"]["quality"] == "high_quality"
+    assert fresh_tracks["Bohemian Rhapsody.flac"]["instrumental_provenance"]["attribution"] == "manual"
 
     queen_output = media_root / "Bohemian Rhapsody.instrumental.mp3"
     queen_output.write_bytes(b"replaced")
@@ -231,3 +314,45 @@ def test_manual_artist_confirmation_is_exact_audited_and_signature_bound(tmp_pat
     ]
     replace_tracks(conn, str(media_root), refreshed_records)
     assert {track["artist"]: track for track in list_tracks(conn)}["Queen"]["instrumental_provenance"] is None
+
+
+def test_file_tag_migration_restores_prior_audited_manual_confirmation(tmp_path):
+    media_root = tmp_path / "Media"
+    media_root.mkdir()
+    source = media_root / "Dancing Queen.flac"
+    output = media_root / "Dancing Queen.instrumental.mp3"
+    source.write_bytes(b"source")
+    output.write_bytes(b"instrumental")
+    db_path = tmp_path / "library.db"
+    conn = get_connection(db_path)
+    replace_tracks(conn, str(media_root), [_track(source, output, artist="ABBA")])
+    confirm_instrumental_quality_for_artists(
+        conn,
+        ["ABBA", "Queen"],
+        "high_quality",
+        confirmed_by="Peter",
+        audit_name="2026-08-10-manual-quality-abba-queen",
+    )
+
+    tags = ID3(output)
+    tags.delall(f"TXXX:{PROVENANCE_TAG_DESCRIPTION}")
+    tags.save(output)
+    conn.execute("UPDATE tracks SET instrumental_provenance_json = NULL")
+    conn.execute(
+        "DELETE FROM app_migrations WHERE name = ?",
+        ("2026-08-15-instrumental-provenance-file-tags-v1",),
+    )
+    conn.commit()
+    conn.close()
+
+    migrated = get_connection(db_path)
+    track = list_tracks(migrated)[0]
+    detail = json.loads(migrated.execute(
+        "SELECT detail_json FROM app_migrations WHERE name = ?",
+        ("2026-08-15-instrumental-provenance-file-tags-v1",),
+    ).fetchone()["detail_json"])
+
+    assert track["instrumental_provenance"]["quality"] == "high_quality"
+    assert track["instrumental_provenance"]["attribution"] == "manual"
+    assert read_instrumental_provenance_tag(output)["quality"] == "high_quality"
+    assert detail["restored_manual_confirmations"] == 1

@@ -936,14 +936,20 @@ The database is an index/cache. If it is deleted, Settings and job history are
 also lost, but tracks can be rebuilt by re-entering media roots and rescanning.
 Back up the data directory if settings and history matter.
 
-Instrumental provenance is also stored in this database. New processing writes
-the chosen profile, engine/model, device, output mode, producing job, and file
-signature when the output is published. On the first startup after upgrading,
-a one-time conservative migration compares the current instrumental with
-successful producer stages in retained job history. It labels only matches
-whose output path and modification time agree; everything else stays **Ready**
-rather than guessing. A later rescan preserves provenance while that exact file
-is unchanged and clears it if the instrumental is replaced or removed.
+The database caches full instrumental provenance, while supported instrumental
+files also carry a portable Karaoke Mixer provenance tag. New processing and
+manual quality confirmation embed the chosen profile, engine/model, device,
+output mode, attribution, and timestamp in the instrumental itself. Catalogue-
+specific paths, file signatures, and job ids remain only in SQLite. This means
+copying a tagged instrumental or rebuilding/reimporting a library restores its
+quality in the UI without requiring the original database.
+
+On the first startup after upgrading, a one-time conservative migration first
+compares current instrumentals with successful producer stages in retained job
+history, then embeds every quality record it can prove. It also restores prior
+audited manual confirmations. Everything else stays **Ready** rather than
+guessing. A later rescan can rebuild the database cache from the embedded tag;
+an untagged replacement or removal clears the cached provenance.
 
 Also back up:
 

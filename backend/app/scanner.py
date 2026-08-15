@@ -8,6 +8,7 @@ import re
 import mutagen
 
 from .duration import read_duration_seconds
+from .instrumental_provenance import read_instrumental_provenance_tag
 from .lrc import classify_lrc_file
 from .release_year import is_plausible_release_year
 
@@ -184,6 +185,7 @@ class TrackRecord:
     instrumental_output_path: str | None = None
     instrumental_mtime_ns: int | None = None
     instrumental_size: int | None = None
+    instrumental_provenance: dict | None = None
 
 
 def iter_media_root(media_root: Path, mirror_roots: list[Path]) -> Iterator[TrackRecord]:
@@ -212,9 +214,14 @@ def iter_media_root(media_root: Path, mirror_roots: list[Path]) -> Iterator[Trac
         instrumental_path = locate_output(path, media_root, mirror_roots, ".instrumental.mp3")
         try:
             instrumental_stat = instrumental_path.stat() if instrumental_path else None
+            instrumental_provenance = (
+                read_instrumental_provenance_tag(instrumental_path)
+                if instrumental_path else None
+            )
         except OSError:
             instrumental_path = None
             instrumental_stat = None
+            instrumental_provenance = None
         # "instrumental" is a mixdown with its own Library badge, not a stem
         stem_count = sum(
             1 for part in PART_NAMES if part != "instrumental" and getattr(outputs, part)
@@ -236,6 +243,7 @@ def iter_media_root(media_root: Path, mirror_roots: list[Path]) -> Iterator[Trac
             instrumental_output_path=str(instrumental_path) if instrumental_path else None,
             instrumental_mtime_ns=instrumental_stat.st_mtime_ns if instrumental_stat else None,
             instrumental_size=instrumental_stat.st_size if instrumental_stat else None,
+            instrumental_provenance=instrumental_provenance,
         )
 
 
