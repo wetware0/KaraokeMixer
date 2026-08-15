@@ -95,9 +95,14 @@ def build_dual_audio_consensus(
                     >= DIRECTIONAL_CORRECTION_MARGIN_SECONDS
                 and (original_start - previous) * (residual_start - previous) > 0
             )
-            chosen = consensus if acoustically_verified or directional else previous
+            # Human-corrected ABBA references showed that same-direction
+            # disagreement is useful triage evidence but unsafe correction
+            # evidence: the old gross-directional changes averaged 783 ms
+            # from the reviewed timing. Keep the input until an independent
+            # ASR signal corroborates one of the acoustic views.
+            chosen = consensus if acoustically_verified else previous
             corrected = (
-                (acoustically_verified or directional)
+                acoustically_verified
                 and abs(baseline - consensus) >= CORRECTION_THRESHOLD_SECONDS
             )
             selected.append(chosen)
@@ -120,7 +125,7 @@ def build_dual_audio_consensus(
                 "correction_basis": (
                     "verified_agreement" if verified
                     else "large_shift_review" if acoustically_verified and large_shift
-                    else "gross_directional" if directional
+                    else "directional_review" if directional
                     else "retained_existing"
                 ),
                 "corrected": corrected,

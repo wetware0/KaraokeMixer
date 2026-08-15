@@ -45,6 +45,30 @@ describe("ProcessDialog", () => {
     expect(screen.getByText("Separation model")).toBeTruthy();
   });
 
+  it("presents isolated-vocal timing as the recommended review profile", async () => {
+    vi.stubEnv("VITE_ENABLE_FAKE_RECIPE", "");
+    const { fetchRecipes } = await import("../api");
+    vi.mocked(fetchRecipes).mockResolvedValue([
+      {
+        name: "improve_lyrics", lane: "gpu",
+        options_schema: {
+          timing_review_profile: {
+            type: "select",
+            choices: ["high_accuracy", "deep", "quick"],
+            default: "high_accuracy",
+          },
+        },
+      },
+    ]);
+    const { default: ProcessDialog } = await import("./ProcessDialog.svelte");
+
+    render(ProcessDialog, { props: { trackIds: [1], device: "cuda", onSubmitted: vi.fn(), onClose: vi.fn() } });
+
+    await waitFor(() => expect(screen.getByText("High Accuracy — isolated vocal (recommended)")).toBeTruthy());
+    expect(screen.getByText("Legacy deep review")).toBeTruthy();
+    expect(screen.getByText("Quick dual-audio review")).toBeTruthy();
+  });
+
   it("submits the selected recipe's options merged with device/overwrite/output_mode", async () => {
     vi.stubEnv("VITE_ENABLE_FAKE_RECIPE", "");
     const { fetchRecipes, submitJob } = await import("../api");

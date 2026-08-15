@@ -204,7 +204,7 @@ class JobQueueManager:
             job_failed = False
 
             with PersistentWorkerPool() as worker_pool:
-                if recipe_def.batch_by_stage and len(job["items"]) > 1:
+                if recipe_def.batch_by_stage:
                     job_failed = self._run_items_by_stage(
                         job_id, job["items"], recipe_def, job["options"], cancel_event, worker_pool
                     )
@@ -425,6 +425,28 @@ class JobQueueManager:
             worker_pool.close()
             if all(record["terminal"] is not None for record in records.values()):
                 break
+
+        for item in items:
+            record = records[item["id"]]
+            ctx = StageContext(
+                source_path=Path(item["source_path"]),
+                overwrite=bool(options.get("overwrite", False)),
+                options=options,
+                cancel_event=cancel_event,
+            )
+            for stage in record["stages"]:
+                cleanup = getattr(stage, "cleanup", None)
+                if cleanup is None:
+                    continue
+                try:
+                    cleanup(ctx)
+                except OSError:
+                    log.warning(
+                        "Could not clean temporary files for stage %s and item %s",
+                        stage.name,
+                        item["id"],
+                        exc_info=True,
+                    )
 
         return any(record["terminal"] == "failed" for record in records.values())
 

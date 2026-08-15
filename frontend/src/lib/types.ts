@@ -267,14 +267,26 @@ export interface LyricTimingWordDetail {
   selected_seconds: number;
   original_seconds: number;
   residual_seconds: number;
-  agreement_seconds: number;
+  agreement_seconds: number | null;
   original_score: number | null;
   residual_score: number | null;
   asr_seconds?: number;
   asr_score?: number | null;
   confidence: number;
   status: "verified" | "review";
-  correction_basis?: "verified_agreement" | "asr_corroborated_original" | "asr_corroborated_residual" | "large_shift_review" | "order_conflict_review" | "gross_directional" | "retained_existing";
+  correction_basis?:
+    | "verified_agreement"
+    | "asr_corroborated_original"
+    | "asr_corroborated_residual"
+    | "large_shift_review"
+    | "order_conflict_review"
+    | "directional_review"
+    | "input_confirmed_by_vocal"
+    | "vocal_reference_verified"
+    | "vocal_reference_review"
+    | "isolated_outlier_review"
+    | "sparse_line_review"
+    | "retained_existing";
   corrected: boolean;
 }
 

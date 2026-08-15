@@ -48,6 +48,7 @@ def separate_to_temp(
     venv_python: Path,
     runner: Callable[..., WorkerResult] = run_worker,
     *,
+    shifts: int | None = None,
     cancel_event: threading.Event | None = None,
     on_progress: Callable[[dict], None] | None = None,
 ) -> dict[str, Path]:
@@ -67,6 +68,8 @@ def separate_to_temp(
         "stem_indices": {stem: index_map[stem] for stem in stems},
         "output_paths": {stem: str(path) for stem, path in temp_paths.items()},
     }
+    if shifts is not None:
+        args["shifts"] = shifts
     result = runner(
         venv_python, DEMUCS_SCRIPT, args,
         timeout_seconds=SEPARATION_TIMEOUT_SECONDS, cancel_event=cancel_event, on_progress=on_progress,
