@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from app.lyrics.provenance import (
     confirm_lyric_timing_quality,
     lyric_timing_details_path,
@@ -26,6 +28,16 @@ def test_quality_record_is_bound_to_the_exact_lrc_content(tmp_path):
 
     lrc.write_text("[00:02.00]<00:02.00>Hello\n", encoding="utf-8")
     assert read_lyric_timing_provenance(lrc) is None
+
+
+def test_provenance_refuses_a_non_lrc_destination(tmp_path):
+    audio = tmp_path / "Song.flac"
+    audio.write_bytes(b"audio")
+
+    with pytest.raises(ValueError, match="canonical .lrc"):
+        write_lyric_timing_provenance(audio, {
+            "quality": "review", "attribution": "automatic",
+        })
 
 
 def test_automatic_review_metrics_round_trip_and_invalid_data_is_rejected(tmp_path):

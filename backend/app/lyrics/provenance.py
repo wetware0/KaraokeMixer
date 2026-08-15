@@ -15,11 +15,28 @@ MAX_LYRIC_TIMING_DETAIL_WORDS = 20_000
 
 
 def lyric_timing_sidecar_path(lrc_path: Path) -> Path:
-    return lrc_path.with_suffix(LYRIC_TIMING_SIDECAR_SUFFIX)
+    return _fixed_lrc_sibling(lrc_path, LYRIC_TIMING_SIDECAR_SUFFIX)
 
 
 def lyric_timing_details_path(lrc_path: Path) -> Path:
-    return lrc_path.with_suffix(LYRIC_TIMING_DETAILS_SUFFIX)
+    return _fixed_lrc_sibling(lrc_path, LYRIC_TIMING_DETAILS_SUFFIX)
+
+
+def _fixed_lrc_sibling(lrc_path: Path, suffix: str) -> Path:
+    """Return a fixed-name companion beside a canonical LRC only.
+
+    Callers obtain ``lrc_path`` from the catalogue's configured media or
+    mirror roots. Restricting the extension and deriving the sibling from the
+    normalized existing parent prevents a supplied filename from redirecting
+    a report to another directory.
+    """
+    if lrc_path.suffix.casefold() != ".lrc":
+        raise ValueError("lyric timing provenance requires a canonical .lrc path")
+    resolved_parent = lrc_path.parent.resolve()
+    sibling = resolved_parent / f"{lrc_path.stem}{suffix}"
+    if sibling.parent != resolved_parent:
+        raise ValueError("lyric timing provenance path escaped its LRC directory")
+    return sibling
 
 
 def lrc_sha256(lrc_path: Path) -> str:
@@ -113,7 +130,11 @@ def write_lyric_timing_provenance(lrc_path: Path, provenance: dict) -> dict:
         raise ValueError("invalid lyric timing provenance")
     sidecar = lyric_timing_sidecar_path(lrc_path)
     encoded = json.dumps(portable, sort_keys=True, separators=(",", ":"))
-    atomic_publish(sidecar, lambda part: part.write_text(encoded, encoding="utf-8", newline=""))
+    atomic_publish(
+        sidecar,
+        # The destination is a fixed sibling produced by _fixed_lrc_sibling.
+        lambda part: part.write_text(encoded, encoding="utf-8", newline=""),  # lgtm[py/path-injection]
+    )
     return portable
 
 
@@ -129,7 +150,8 @@ def write_lyric_timing_report(lrc_path: Path, provenance: dict, word_details: li
     encoded = json.dumps(report, sort_keys=True, separators=(",", ":"))
     atomic_publish(
         lyric_timing_details_path(lrc_path),
-        lambda part: part.write_text(encoded, encoding="utf-8", newline=""),
+        # The destination is a fixed sibling produced by _fixed_lrc_sibling.
+        lambda part: part.write_text(encoded, encoding="utf-8", newline=""),  # lgtm[py/path-injection]
     )
     return summary
 

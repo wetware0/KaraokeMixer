@@ -66,7 +66,13 @@ class ImproveLyricsStage:
                 status=StageStatus.FAILED,
                 detail="Improving lyric confidence requires the WhisperX worker",
             )
-        lrc_path = resolve_lrc_path(ctx.source_path, ctx.options)
+        try:
+            source_path = _validated_managed_path(ctx.source_path, ctx.options, must_exist=True)
+            lrc_path = _validated_managed_path(
+                resolve_lrc_path(source_path, ctx.options), ctx.options, must_exist=False,
+            )
+        except ValueError as exc:
+            return StageResult(status=StageStatus.FAILED, detail=str(exc))
         if not lrc_path.is_file():
             return StageResult(status=StageStatus.SKIPPED, detail="no LRC to improve")
         if classify_lrc_file(lrc_path) != TimingState.ENHANCED:
@@ -74,12 +80,16 @@ class ImproveLyricsStage:
                 status=StageStatus.SKIPPED,
                 detail="confidence improvement currently requires enhanced per-word timing",
             )
-        instrumental = _locate_instrumental(ctx.source_path, ctx.options)
+        instrumental = _locate_instrumental(source_path, ctx.options)
         if instrumental is None:
             return StageResult(
                 status=StageStatus.SKIPPED,
                 detail="a karaoke instrumental is required to build the vocal residual",
             )
+        try:
+            instrumental = _validated_managed_path(instrumental, ctx.options, must_exist=True)
+        except ValueError as exc:
+            return StageResult(status=StageStatus.FAILED, detail=str(exc))
 
         try:
             initial_lrc_bytes = lrc_path.read_bytes()
@@ -94,11 +104,11 @@ class ImproveLyricsStage:
                 detail="enhanced LRC word markers do not match its lyric word count",
             )
         try:
-            duration = _probe_duration(ctx.source_path)
+            duration = _probe_duration(source_path)
             segments = line_timed_segments(document, duration=duration)
             runner = ctx.worker_runner or self._runner
             original_result = _run_alignment(
-                runner, self._venv_python, ctx.source_path, segments, self._language,
+                runner, self._venv_python, source_path, segments, self._language,
                 self._device, ctx,
             )
             if original_result.status != "completed":
@@ -108,7 +118,7 @@ class ImproveLyricsStage:
                 )
             with tempfile.TemporaryDirectory(prefix="karaoke-lyric-confidence-") as raw_temp:
                 residual_path = Path(raw_temp) / "vocal-residual.wav"
-                self._residual_builder(ctx.source_path, instrumental, residual_path)
+                self._residual_builder(source_path, instrumental, residual_path)
                 residual_result = _run_alignment(
                     runner, self._venv_python, residual_path, segments, self._language,
                     self._device, ctx,
@@ -153,10 +163,15 @@ class ImproveLyricsStage:
         try:
             if confidence.corrected_words:
                 if not backup_path.exists():
-                    atomic_publish(backup_path, lambda part: part.write_bytes(initial_lrc_bytes))
+                    atomic_publish(
+                        backup_path,
+                        # backup_path is a fixed sibling of the validated LRC.
+                        lambda part: part.write_bytes(initial_lrc_bytes),  # lgtm[py/path-injection]
+                    )
                 atomic_publish(
                     lrc_path,
-                    lambda part: part.write_text(improved, encoding="utf-8", newline=""),
+                    # lrc_path was normalized and checked against configured roots.
+                    lambda part: part.write_text(improved, encoding="utf-8", newline=""),  # lgtm[py/path-injection]
                 )
             summary = write_lyric_timing_report(lrc_path, {
                 "quality": confidence.quality,
@@ -242,6 +257,23 @@ def _locate_instrumental(source_path: Path, options: dict) -> Path | None:
     )
 
 
+def _validated_managed_path(path: Path, options: dict, *, must_exist: bool) -> Path:
+    """Normalize a worker path and keep it inside a configured library root."""
+    configured = [
+        Path(root).resolve()
+        for root in (*options.get("media_roots", []), *options.get("mirror_roots", []))
+    ]
+    if not configured:
+        raise ValueError("lyric confidence processing requires a configured library root")
+    try:
+        resolved = path.resolve(strict=must_exist)
+    except OSError as exc:
+        raise ValueError(f"could not resolve managed media path: {exc}") from exc
+    if not any(resolved.is_relative_to(root) for root in configured):
+        raise ValueError("lyric confidence processing refused a path outside configured library roots")
+    return resolved
+
+
 def _probe_duration(source_path: Path) -> float:
     completed = subprocess.run(
         [
@@ -274,6 +306,7 @@ def _capture_files(*paths: Path) -> dict[Path, bytes | None]:
 def _restore_files(captured: dict[Path, bytes | None]) -> None:
     for path, content in captured.items():
         if content is None:
-            path.unlink(missing_ok=True)
+            # Every captured path is derived from the validated canonical LRC.
+            path.unlink(missing_ok=True)  # lgtm[py/path-injection]
         else:
             atomic_publish(path, lambda part, data=content: part.write_bytes(data))

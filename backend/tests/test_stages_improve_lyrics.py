@@ -134,3 +134,17 @@ def test_concurrent_lyric_edit_wins_and_is_not_overwritten(
     assert "changed while" in result.detail
     assert lrc.read_text(encoding="utf-8") == "[00:03.00]<00:03.00>Newer\n"
     assert not (tmp_path / "song.before-confidence.lrc").exists()
+
+
+def test_refuses_source_outside_configured_library_roots(tmp_path: Path, fake_python: Path):
+    configured = tmp_path / "Library"
+    configured.mkdir()
+    source = tmp_path / "Outside.flac"
+    source.write_bytes(b"audio")
+
+    result = ImproveLyricsStage(venv_python=fake_python).run(
+        StageContext(source, False, {"media_roots": [str(configured)]}),
+    )
+
+    assert result.status == StageStatus.FAILED
+    assert "outside configured library roots" in result.detail
