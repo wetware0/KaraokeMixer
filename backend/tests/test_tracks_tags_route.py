@@ -83,6 +83,8 @@ def test_put_then_get_artwork_round_trips(tmp_path):
         "/api/tracks/1/artwork", content=data, headers={"Content-Type": "image/jpeg"}
     )
     assert put_response.status_code == 200
+    assert put_response.json()["track"]["has_artwork"] is True
+    assert client.get("/api/tracks").json()["tracks"][0]["has_artwork"] is True
 
     get_response = client.get("/api/tracks/1/artwork")
     assert get_response.status_code == 200

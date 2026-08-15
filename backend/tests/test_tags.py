@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydub import AudioSegment
 
-from app.tags import read_embedded_artwork, write_embedded_artwork, write_text_tags
+from app.tags import has_embedded_artwork, read_embedded_artwork, write_embedded_artwork, write_text_tags
 
 _FFMPEG_FORMAT = {"flac": "flac", "mp3": "mp3", "m4a": "ipod"}
 
@@ -66,6 +66,12 @@ def test_write_then_read_embedded_artwork_round_trips_bytes_and_mime(tmp_path, s
     read_data, mime = result
     assert read_data == data
     assert mime == "image/jpeg"
+    assert has_embedded_artwork(path) is True
+
+
+@pytest.mark.parametrize("suffix", [".flac", ".mp3", ".m4a"])
+def test_has_embedded_artwork_is_false_when_there_is_none(tmp_path, suffix):
+    assert has_embedded_artwork(_make_audio_file(tmp_path, suffix)) is False
 
 
 @pytest.mark.parametrize("suffix", [".flac", ".mp3", ".m4a"])

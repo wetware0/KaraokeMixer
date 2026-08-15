@@ -44,6 +44,7 @@ export interface Track {
   album: string | null;
   year: number | null;
   duration_seconds: number | null;
+  has_artwork?: boolean | null;
   instrumental_provenance?: InstrumentalProvenance | null;
 }
 

@@ -56,6 +56,29 @@ def read_embedded_artwork(path: Path) -> tuple[bytes, str] | None:
         return None
 
 
+def has_embedded_artwork(path: Path) -> bool:
+    """Return whether a supported audio container has embedded artwork.
+
+    This deliberately avoids copying the image payload. The library scanner
+    needs only a compact catalogue flag so an 80,000-row UI can filter
+    artwork without issuing one HTTP artwork request per track.
+    """
+    suffix = path.suffix.lower()
+    if suffix not in _SUPPORTED_SUFFIXES:
+        return False
+    try:
+        if suffix == ".flac":
+            return bool(FLAC(path).pictures)
+        if suffix == ".mp3":
+            try:
+                return bool(ID3(path).getall("APIC"))
+            except ID3NoHeaderError:
+                return False
+        return bool(MP4(path).get("covr"))
+    except Exception:
+        return False
+
+
 def write_embedded_artwork(path: Path, data: bytes, mime: str) -> None:
     """Embeds/replaces the file's cover picture. Only ever touches the
     metadata container - never the compressed audio payload.

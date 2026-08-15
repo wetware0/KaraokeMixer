@@ -161,6 +161,9 @@
   let columnMenuEl = $state<HTMLDivElement | undefined>();
   let columnsButtonEl = $state<HTMLButtonElement | undefined>();
   let restoreColumnMenuFocus = false;
+  let openHeaderFilterKey = $state<LibraryColumnKey | null>(null);
+  let headerFilterDraft = $state("");
+  let headerFilterControlEl = $state<HTMLInputElement | HTMLSelectElement | undefined>();
   let resizingColumn = $state<{ key: LibraryColumnKey; startX: number; startWidth: number } | null>(null);
   let draggingColumn = $state<LibraryColumnKey | null>(null);
   let dragOverColumn = $state<LibraryColumnKey | null>(null);
@@ -272,7 +275,6 @@
   }
 
   function setColumnFilter(key: LibraryColumnKey, value: string): void {
-    if (key === "artwork") return;
     persistColumns({
       ...columnsState,
       columns: columnsState.columns.map((column) => (column.key === key ? { ...column, filter: value } : column)),
@@ -280,6 +282,12 @@
   }
 
   function filterOptionsFor(key: LibraryColumnKey): Array<{ value: string; label: string }> | null {
+    if (key === "artwork") return [
+      { value: "", label: "All artwork" },
+      { value: "has", label: "Has artwork" },
+      { value: "missing", label: "Missing artwork" },
+      { value: "unknown", label: "Not checked" },
+    ];
     if (key === "instrumental") return [
       { value: "", label: "All" },
       { value: "high_quality", label: "High Quality" },
@@ -303,6 +311,41 @@
       { value: "none", label: "No stems" },
     ];
     return null;
+  }
+
+  const activeFilterCount = $derived(
+    columnsState.columns.filter((column) => column.filter.trim() !== "").length
+  );
+
+  async function openHeaderFilter(column: LibraryColumnConfig): Promise<void> {
+    openHeaderFilterKey = column.key;
+    headerFilterDraft = column.filter;
+    await tick();
+    headerFilterControlEl?.focus();
+  }
+
+  function closeHeaderFilter(): void {
+    openHeaderFilterKey = null;
+  }
+
+  function applyHeaderFilter(key: LibraryColumnKey): void {
+    setColumnFilter(key, headerFilterDraft);
+    closeHeaderFilter();
+  }
+
+  function clearHeaderFilter(key: LibraryColumnKey): void {
+    headerFilterDraft = "";
+    setColumnFilter(key, "");
+    closeHeaderFilter();
+  }
+
+  function clearAllColumnFilters(): void {
+    persistColumns({
+      ...columnsState,
+      columns: columnsState.columns.map((column) => ({ ...column, filter: "" })),
+    });
+    headerFilterDraft = "";
+    closeHeaderFilter();
   }
 
   function setColumnWidth(key: LibraryColumnKey, width: number, save: boolean): void {
@@ -948,12 +991,16 @@
       <div class="track-list-actions">
         <span class="track-list-selection-summary">
           {selectedTrackIds.size === 0 ? "Select tracks to prepare" : `${selectedTrackIds.size} selected`}
+          · {displayedTracks.length.toLocaleString()} of {visibleTracks.length.toLocaleString()} shown
         </span>
         {#if selectedFolder}
           <button onclick={selectAllInFolder}>Select all in folder</button>
         {/if}
         {#if selectedTrackIds.size > 0}
           <button onclick={clearSelection}>Clear</button>
+        {/if}
+        {#if activeFilterCount > 0}
+          <button class="library-clear-filters" onclick={clearAllColumnFilters}>Clear filters ({activeFilterCount})</button>
         {/if}
         <button
           class="library-columns-button"
@@ -993,22 +1040,84 @@
               {#each orderedColumns as column (column.key)}
                 <th
                   class="library-table-header-cell"
+                  class:library-table-header-filtered={column.filter.trim() !== ""}
+                  class:library-table-header-filter-open={openHeaderFilterKey === column.key}
                   style={`width: ${column.width}px; min-width: ${column.width}px; max-width: ${column.width}px;`}
                 >
-                  {#if column.key === "artwork"}
-                    <span class="library-table-visual-header">{column.label}</span>
-                  {:else}
+                  <div class="library-table-header-content">
+                    {#if column.key === "artwork"}
+                      <span class="library-table-visual-header">{column.label}</span>
+                    {:else}
+                      <button
+                        type="button"
+                        class="library-table-sort-button"
+                        aria-label={sortAriaLabel(column.key, column.label)}
+                        onclick={() => cycleSort(column.key)}
+                      >
+                        <span>{column.label}</span>
+                        <span class="library-sort-indicator" aria-hidden="true">
+                          {columnsState.sortKey === column.key ? (columnsState.sortDirection === "asc" ? "↑" : "↓") : "↕"}
+                        </span>
+                      </button>
+                    {/if}
                     <button
                       type="button"
-                      class="library-table-sort-button"
-                      aria-label={sortAriaLabel(column.key, column.label)}
-                      onclick={() => cycleSort(column.key)}
+                      class="library-header-filter-button"
+                      class:active={column.filter.trim() !== ""}
+                      aria-label={`Open ${column.label} filter`}
+                      aria-haspopup="dialog"
+                      aria-expanded={openHeaderFilterKey === column.key}
+                      title={`Filter ${column.label}`}
+                      onclick={(event) => {
+                        event.stopPropagation();
+                        if (openHeaderFilterKey === column.key) closeHeaderFilter();
+                        else void openHeaderFilter(column);
+                      }}
                     >
-                      <span>{column.label}</span>
-                      <span class="library-sort-indicator" aria-hidden="true">
-                        {columnsState.sortKey === column.key ? (columnsState.sortDirection === "asc" ? "↑" : "↓") : "↕"}
-                      </span>
+                      <span aria-hidden="true">▾</span>
                     </button>
+                  </div>
+                  {#if openHeaderFilterKey === column.key}
+                    <div
+                      class="library-header-filter-popover"
+                      role="dialog"
+                      tabindex="-1"
+                      aria-labelledby={`library-filter-${column.key}-title`}
+                      onkeydown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Escape") closeHeaderFilter();
+                        if (event.key === "Enter") applyHeaderFilter(column.key);
+                      }}
+                    >
+                      <div class="library-header-filter-title-row">
+                        <strong id={`library-filter-${column.key}-title`}>Filter {column.label}</strong>
+                        <button type="button" aria-label={`Close ${column.label} filter`} onclick={closeHeaderFilter}>×</button>
+                      </div>
+                      {#if filterOptionsFor(column.key)}
+                        <select
+                          bind:this={headerFilterControlEl}
+                          bind:value={headerFilterDraft}
+                          aria-label={`${column.label} filter value`}
+                        >
+                          {#each filterOptionsFor(column.key) ?? [] as option}
+                            <option value={option.value}>{option.label}</option>
+                          {/each}
+                        </select>
+                      {:else}
+                        <input
+                          bind:this={headerFilterControlEl}
+                          bind:value={headerFilterDraft}
+                          type="text"
+                          placeholder={`Contains ${column.label.toLowerCase()}…`}
+                          aria-label={`${column.label} filter value`}
+                        />
+                      {/if}
+                      <p>Filters in different columns are combined.</p>
+                      <div class="library-header-filter-actions">
+                        <button type="button" onclick={() => clearHeaderFilter(column.key)}>Clear</button>
+                        <button type="button" class="primary" onclick={() => applyHeaderFilter(column.key)}>Apply</button>
+                      </div>
+                    </div>
                   {/if}
                   <button
                     type="button"
@@ -1169,6 +1278,7 @@
         <div class="library-column-menu-footer">
           <div>
             <button type="button" class="library-column-clear-sort" disabled={columnsState.sortKey === null} onclick={clearSort}>Clear sort</button>
+            <button type="button" disabled={activeFilterCount === 0} onclick={clearAllColumnFilters}>Clear filters ({activeFilterCount})</button>
             <button type="button" onclick={resetColumnWidths}>Reset widths</button>
           </div>
           <button type="button" class="library-column-done" onclick={() => void closeColumnMenu()}>Done</button>
