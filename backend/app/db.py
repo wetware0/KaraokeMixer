@@ -7,7 +7,12 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .instrumental_provenance import UVR_KARAOKE_MODELS, build_instrumental_provenance
+from .instrumental_provenance import (
+    UVR_KARAOKE_MODELS,
+    build_instrumental_provenance,
+    portable_instrumental_provenance,
+    write_instrumental_provenance_tag,
+)
 from .output_paths import resolve_output_path
 from .processing_profiles import PROCESSING_PROFILES, profile_option
 from .scanner import PART_NAMES, TrackOutputs, locate_output
@@ -120,6 +125,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         _add_column_if_missing(conn, "tracks", "duration_seconds", "REAL")
         _add_column_if_missing(conn, "tracks", "instrumental_provenance_json", "TEXT")
     _run_instrumental_provenance_backfill_migration(conn)
+    _run_instrumental_provenance_tag_migration(conn)
 
 
 def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
@@ -150,8 +156,8 @@ def _run_instrumental_provenance_backfill_migration(conn: sqlite3.Connection) ->
 
 
 def _instrumental_provenance_for_scan(existing_json: str | None, track) -> str | None:
-    """Preserve provenance only while it still describes the scanned file."""
-    if not track.outputs.instrumental or not existing_json:
+    """Keep a valid cache record or rebuild it from the instrumental's tag."""
+    if not track.outputs.instrumental:
         return None
     output_path = getattr(track, "instrumental_output_path", None)
     output_mtime_ns = getattr(track, "instrumental_mtime_ns", None)
@@ -160,20 +166,76 @@ def _instrumental_provenance_for_scan(existing_json: str | None, track) -> str |
     # cannot disprove an existing record, whereas the real scanner always can.
     if output_path is None or output_mtime_ns is None or output_size is None:
         return existing_json
-    try:
-        provenance = json.loads(existing_json)
-        same_path = os.path.normcase(os.path.abspath(provenance["output_path"])) == os.path.normcase(
-            os.path.abspath(str(output_path))
+    if existing_json:
+        try:
+            provenance = json.loads(existing_json)
+            same_path = os.path.normcase(os.path.abspath(provenance["output_path"])) == os.path.normcase(
+                os.path.abspath(str(output_path))
+            )
+            if (
+                same_path
+                and provenance.get("output_mtime_ns") == output_mtime_ns
+                and provenance.get("output_size") == output_size
+            ):
+                return existing_json
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+
+    embedded = getattr(track, "instrumental_provenance", None)
+    portable = portable_instrumental_provenance(embedded) if isinstance(embedded, dict) else None
+    if portable is not None:
+        portable["output_path"] = str(output_path)
+        recovered = _enrich_instrumental_provenance(
+            Path(track.absolute_path),
+            None,
+            None,
+            str(portable.get("stage") or "embedded_tag"),
+            portable,
+            attribution=str(portable.get("attribution") or "embedded"),
+            recorded_at=portable.get("recorded_at"),
         )
-        if (
-            same_path
-            and provenance.get("output_mtime_ns") == output_mtime_ns
-            and provenance.get("output_size") == output_size
-        ):
-            return existing_json
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-        pass
+        if recovered is not None:
+            return json.dumps(recovered, sort_keys=True)
     return None
+
+
+def _run_instrumental_provenance_tag_migration(conn: sqlite3.Connection) -> None:
+    """Recover known quality and make it portable in instrumental file tags."""
+    migration_name = "2026-08-15-instrumental-provenance-file-tags-v1"
+    existing = conn.execute("SELECT 1 FROM app_migrations WHERE name = ?", (migration_name,)).fetchone()
+    if existing is not None:
+        return
+
+    recovered_from_history = backfill_known_instrumental_provenance(conn)
+    restored_manual = 0
+    manual_audit = conn.execute(
+        "SELECT detail_json FROM app_migrations WHERE name = ?",
+        ("2026-08-10-manual-quality-abba-queen",),
+    ).fetchone()
+    if manual_audit is not None:
+        try:
+            detail = json.loads(manual_audit["detail_json"])
+            manual_result = confirm_instrumental_quality_for_artists(
+                conn,
+                detail["artists"],
+                detail["quality"],
+                confirmed_by=detail["confirmed_by"],
+            )
+            restored_manual = manual_result["tracks_updated"]
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            restored_manual = 0
+
+    tagged_existing = persist_current_instrumental_provenance_tags(conn)
+    migration_detail = {
+        "recovered_from_history": recovered_from_history,
+        "restored_manual_confirmations": restored_manual,
+        "existing_records_tagged": tagged_existing,
+    }
+    with _write_lock, conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO app_migrations (name, applied_at, detail_json) VALUES (?, ?, ?)",
+            (migration_name, datetime.now(timezone.utc).isoformat(), json.dumps(migration_detail, sort_keys=True)),
+        )
 
 
 def get_settings(conn: sqlite3.Connection) -> dict:
@@ -549,6 +611,17 @@ def record_instrumental_provenance(
     track_row = conn.execute("SELECT absolute_path FROM tracks WHERE id = ?", (track_id,)).fetchone()
     if track_row is None:
         return None
+    effective_recorded_at = recorded_at or datetime.now(timezone.utc).isoformat()
+    tagged = {
+        **provenance,
+        "stage": stage_name,
+        "attribution": attribution,
+        "recorded_at": effective_recorded_at,
+    }
+    try:
+        write_instrumental_provenance_tag(Path(str(provenance.get("output_path", ""))), tagged)
+    except (OSError, ValueError):
+        return None
     enriched = _enrich_instrumental_provenance(
         Path(track_row["absolute_path"]),
         job_id,
@@ -556,7 +629,7 @@ def record_instrumental_provenance(
         stage_name,
         provenance,
         attribution=attribution,
-        recorded_at=recorded_at,
+        recorded_at=effective_recorded_at,
     )
     if enriched is None:
         return None
@@ -632,6 +705,17 @@ def confirm_instrumental_quality_for_artists(
             "output_path": str(output_path),
             "confirmed_by": confirmer,
         }
+        tagged = {
+            **base,
+            "stage": "manual_confirmation",
+            "attribution": "manual",
+            "recorded_at": recorded_at,
+        }
+        try:
+            write_instrumental_provenance_tag(output_path, tagged)
+        except (OSError, ValueError):
+            skipped.append(row["id"])
+            continue
         enriched = _enrich_instrumental_provenance(
             source_path,
             None,
@@ -711,6 +795,49 @@ def _enrich_instrumental_provenance(
     return enriched
 
 
+def persist_current_instrumental_provenance_tags(conn: sqlite3.Connection) -> int:
+    """Embed valid cached provenance and refresh signatures changed by tagging."""
+    rows = conn.execute(
+        """
+        SELECT id, instrumental_provenance_json
+        FROM tracks
+        WHERE has_instrumental = 1
+          AND instrumental_provenance_json IS NOT NULL
+        ORDER BY id
+        """
+    ).fetchall()
+    updates: list[tuple[str, int]] = []
+    tagged = 0
+    for row in rows:
+        try:
+            provenance = json.loads(row["instrumental_provenance_json"])
+            output_path = Path(provenance["output_path"])
+            before = output_path.stat()
+            if (
+                provenance.get("output_mtime_ns") != before.st_mtime_ns
+                or provenance.get("output_size") != before.st_size
+            ):
+                continue
+            changed = write_instrumental_provenance_tag(output_path, provenance)
+            after = output_path.stat()
+        except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if changed:
+            tagged += 1
+        if changed or after.st_mtime_ns != provenance.get("output_mtime_ns") or after.st_size != provenance.get("output_size"):
+            provenance["output_mtime_ns"] = after.st_mtime_ns
+            provenance["output_size"] = after.st_size
+            updates.append((json.dumps(provenance, sort_keys=True), row["id"]))
+
+    if updates:
+        with _write_lock, conn:
+            conn.executemany(
+                "UPDATE tracks SET instrumental_provenance_json = ? WHERE id = ?",
+                updates,
+            )
+    return tagged
+
+
 def backfill_known_instrumental_provenance(conn: sqlite3.Connection) -> int:
     """Infer current provenance only when history and file time agree.
 
@@ -719,27 +846,42 @@ def backfill_known_instrumental_provenance(conn: sqlite3.Connection) -> int:
     tolerance covers filesystem timestamp precision without claiming copied,
     externally replaced, or otherwise ambiguous outputs.
     """
+    current_tracks = conn.execute(
+        """
+        SELECT id, absolute_path
+        FROM tracks
+        WHERE has_instrumental = 1
+          AND instrumental_provenance_json IS NULL
+        """
+    ).fetchall()
+    current_by_source = {
+        os.path.normcase(os.path.abspath(row["absolute_path"])): (row["id"], Path(row["absolute_path"]))
+        for row in current_tracks
+    }
+    if not current_by_source:
+        return 0
+
     rows = conn.execute(
         """
         SELECT
-            track.id AS track_id,
             item.id AS item_id,
             item.source_path,
             item.stages_json,
             job.id AS job_id,
             job.recipe,
             job.settings_json
-        FROM tracks AS track
-        JOIN job_items AS item ON item.track_id = track.id
+        FROM job_items AS item
         JOIN jobs AS job ON job.id = item.job_id
-        WHERE track.has_instrumental = 1
-          AND track.instrumental_provenance_json IS NULL
-          AND job.recipe IN ('karaoke', 'full_prep')
+        WHERE job.recipe IN ('karaoke', 'full_prep')
         ORDER BY item.id DESC
         """
     ).fetchall()
-    best_by_track: dict[int, tuple[datetime, sqlite3.Row, dict, str, dict]] = {}
+    best_by_track: dict[int, tuple[datetime, sqlite3.Row, dict, str, Path]] = {}
     for row in rows:
+        current = current_by_source.get(os.path.normcase(os.path.abspath(row["source_path"])))
+        if current is None:
+            continue
+        track_id, current_source_path = current
         try:
             options = json.loads(row["settings_json"])
             stages = json.loads(row["stages_json"])
@@ -761,7 +903,7 @@ def backfill_known_instrumental_provenance(conn: sqlite3.Connection) -> int:
             finished_at = datetime.fromisoformat(stage["finished_at"])
             if finished_at.tzinfo is None:
                 finished_at = finished_at.replace(tzinfo=timezone.utc)
-            output_path = resolve_output_path(Path(row["source_path"]), "instrumental", options)
+            output_path = resolve_output_path(current_source_path, "instrumental", options)
             output_stat = output_path.stat()
         except (OSError, TypeError, ValueError):
             continue
@@ -785,20 +927,31 @@ def backfill_known_instrumental_provenance(conn: sqlite3.Connection) -> int:
                 model=str(profile_option(options, "model", "htdemucs")),
                 backing_vocal_mode=backing_mode,
             )
-        existing = best_by_track.get(row["track_id"])
+        existing = best_by_track.get(track_id)
         if existing is None or finished_at > existing[0]:
-            best_by_track[row["track_id"]] = (finished_at, row, base, producer_stage, stage)
+            best_by_track[track_id] = (finished_at, row, base, producer_stage, current_source_path)
 
     updates: list[tuple[str, int]] = []
-    for track_id, (finished_at, row, base, producer_stage, _stage) in best_by_track.items():
+    for track_id, (finished_at, row, base, producer_stage, current_source_path) in best_by_track.items():
+        recorded_at = finished_at.isoformat()
+        tagged = {
+            **base,
+            "stage": producer_stage,
+            "attribution": "inferred",
+            "recorded_at": recorded_at,
+        }
+        try:
+            write_instrumental_provenance_tag(Path(base["output_path"]), tagged)
+        except (OSError, ValueError):
+            continue
         enriched = _enrich_instrumental_provenance(
-            Path(row["source_path"]),
+            current_source_path,
             row["job_id"],
             row["item_id"],
             producer_stage,
             base,
             attribution="inferred",
-            recorded_at=finished_at.isoformat(),
+            recorded_at=recorded_at,
         )
         if enriched is not None:
             updates.append((json.dumps(enriched, sort_keys=True), track_id))
