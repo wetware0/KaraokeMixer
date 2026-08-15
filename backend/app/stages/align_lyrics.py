@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import statistics
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -8,12 +9,14 @@ from typing import Callable
 from ..lrc import TimingState, classify_lrc_file, read_lrc_text
 from ..lyrics.alignment import AlignmentDocument, ObservedWord, assign_word_timings, line_timed_segments
 from ..lyrics.paths import resolve_lrc_path
+from ..lyrics.provenance import write_lyric_timing_provenance
 from ..pipeline import StageContext, StageResult, StageStatus, atomic_publish
 from ..workers.runner import WorkerResult, run_worker
 
 WHISPERX_SCRIPT = Path(__file__).resolve().parent.parent.parent / "workers" / "whisperx_worker.py"
 ALIGN_TIMEOUT_SECONDS = 3600.0
 DEFAULT_ASR_MODEL = "small.en"
+MIN_ALIGNMENT_COVERAGE = 0.80
 
 
 def default_whisperx_venv_python() -> Path:
@@ -129,6 +132,15 @@ class AlignLyricsStage:
             ]
             target_words = [token.text for token in document.tokens]
             assignment = assign_word_timings(target_words, observed)
+            if assignment.coverage < MIN_ALIGNMENT_COVERAGE:
+                return StageResult(
+                    status=StageStatus.FAILED,
+                    detail=(
+                        "AI timing did not safely match enough lyric words "
+                        f"({assignment.coverage:.0%}; minimum {MIN_ALIGNMENT_COVERAGE:.0%}). "
+                        "The existing LRC was left unchanged."
+                    ),
+                )
             enhanced = document.render_enhanced(assignment.starts)
         except (ValueError, KeyError, OSError, subprocess.CalledProcessError, FileNotFoundError) as exc:
             return StageResult(status=StageStatus.FAILED, detail=str(exc))
@@ -137,7 +149,38 @@ class AlignLyricsStage:
         # Disable Windows text-mode newline translation or CRLF would become
         # CRCRLF and appear as spurious blank lines on the next read.
         atomic_publish(lrc_path, lambda part: part.write_text(enhanced, encoding="utf-8", newline=""))
-        return StageResult(status=StageStatus.COMPLETED, detail=f"wrote enhanced LRC (coverage {assignment.coverage:.0%})")
+        score_values = [score for score in assignment.scores if score is not None]
+        median_confidence = statistics.median(score_values) if score_values else None
+        low_confidence_words = sum(score < 0.5 for score in score_values)
+        write_lyric_timing_provenance(lrc_path, {
+            # One automatic alignment is a review candidate, not a quality
+            # certification. High Quality is earned by listening review (or
+            # a future independent multi-method gate), never by the mere
+            # presence of enhanced word tags.
+            "quality": "review",
+            "engine": "whisperx",
+            "model": self._asr_model if args["mode"] == "transcribe" else "wav2vec2-alignment",
+            "method": "full_song_asr" if args["mode"] == "transcribe" else "line_constrained_ctc",
+            "device": self._device,
+            "words": len(target_words),
+            "matched": assignment.matched,
+            "interpolated": assignment.interpolated,
+            "coverage": assignment.coverage,
+            "median_confidence": median_confidence,
+            "low_confidence_words": low_confidence_words,
+            "attribution": "automatic",
+            "confirmed_by": None,
+        })
+        confidence_detail = (
+            f", median confidence {median_confidence:.2f}" if median_confidence is not None else ""
+        )
+        return StageResult(
+            status=StageStatus.COMPLETED,
+            detail=(
+                f"wrote enhanced LRC for review (coverage {assignment.coverage:.0%}"
+                f"{confidence_detail})"
+            ),
+        )
 
     def _probe_duration(self, source_path: Path) -> float:
         completed = subprocess.run(

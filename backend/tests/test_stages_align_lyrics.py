@@ -3,6 +3,7 @@ import subprocess
 import pytest
 
 from app.pipeline import StageContext, StageStatus
+from app.lyrics.provenance import read_lyric_timing_provenance
 from app.stages.align_lyrics import AlignLyricsStage
 from app.workers.runner import WorkerResult
 
@@ -78,7 +79,12 @@ def test_realign_enhanced_runs_alignment_again_when_explicitly_requested(tmp_pat
 
     assert result.status == StageStatus.COMPLETED
     assert runner.calls[0]["mode"] == "align"
-    assert lrc.read_text(encoding="utf-8") == "[00:01.20]<00:01.20>hello<00:01.70> world"
+    # The independent line cue is preserved while every word is realigned.
+    assert lrc.read_text(encoding="utf-8") == "[00:01.00]<00:01.20>hello<00:01.70> world"
+    provenance = read_lyric_timing_provenance(lrc)
+    assert provenance["quality"] == "review"
+    assert provenance["coverage"] == 1.0
+    assert provenance["median_confidence"] == 0.9
 
 
 def test_reset_existing_timing_retranscribes_the_entire_file_and_removes_old_breaks(tmp_path, fake_venv_python):
@@ -138,6 +144,7 @@ def test_aligns_a_line_timed_lrc_and_writes_enhanced_tags(tmp_path, monkeypatch,
     assert result.status == StageStatus.COMPLETED
     assert lrc.read_text(encoding="utf-8") == "[00:01.00]<00:01.00>hello<00:01.50> world"
     assert runner.calls[0]["mode"] == "align"
+    assert read_lyric_timing_provenance(lrc)["quality"] == "review"
 
 
 def test_aligns_a_cp1252_encoded_line_timed_lrc_without_a_unicode_decode_error(tmp_path, monkeypatch, fake_venv_python):
@@ -176,6 +183,30 @@ def test_transcribes_an_untimed_lrc(tmp_path, fake_venv_python):
     assert result.status == StageStatus.COMPLETED
     assert runner.calls[0]["mode"] == "transcribe"
     assert runner.calls[0]["asr_model"] == "small.en"
+
+
+def test_low_coverage_alignment_fails_without_overwriting_existing_lyrics(tmp_path, fake_venv_python):
+    lrc = tmp_path / "song.lrc"
+    original = "[00:01.00]<00:01.00>one<00:01.50> two<00:02.00> three<00:02.50> four\n"
+    lrc.write_text(original, encoding="utf-8")
+    runner = _FakeRunner([
+        {"word": "one", "start": 10.0, "end": 10.4, "score": 0.9},
+    ])
+    stage = AlignLyricsStage(
+        runner=runner,
+        asr_model="small.en",
+        venv_python=fake_venv_python,
+        reset_existing_timing=True,
+    )
+    ctx = StageContext(source_path=tmp_path / "song.flac", overwrite=False, options={})
+
+    result = stage.run(ctx)
+
+    assert result.status == StageStatus.FAILED
+    assert "25%" in result.detail
+    assert "left unchanged" in result.detail
+    assert lrc.read_text(encoding="utf-8") == original
+    assert read_lyric_timing_provenance(lrc) is None
 
 
 def test_fails_cleanly_on_worker_error(tmp_path, fake_venv_python):

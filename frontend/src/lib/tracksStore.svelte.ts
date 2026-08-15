@@ -13,6 +13,8 @@ function swallow(p: Promise<unknown>): void {
 function sameTrack(left: Track, right: Track): boolean {
   const leftProvenance = left.instrumental_provenance;
   const rightProvenance = right.instrumental_provenance;
+  const leftLyricProvenance = left.lyric_timing_provenance;
+  const rightLyricProvenance = right.lyric_timing_provenance;
   return left.id === right.id
     && left.media_root === right.media_root
     && left.relative_path === right.relative_path
@@ -49,7 +51,24 @@ function sameTrack(left: Track, right: Track): boolean {
     && leftProvenance?.stage === rightProvenance?.stage
     && leftProvenance?.attribution === rightProvenance?.attribution
     && leftProvenance?.confirmed_by === rightProvenance?.confirmed_by
-    && leftProvenance?.recorded_at === rightProvenance?.recorded_at;
+    && leftProvenance?.recorded_at === rightProvenance?.recorded_at
+    && leftLyricProvenance?.quality === rightLyricProvenance?.quality
+    && leftLyricProvenance?.lrc_sha256 === rightLyricProvenance?.lrc_sha256
+    && leftLyricProvenance?.engine === rightLyricProvenance?.engine
+    && leftLyricProvenance?.model === rightLyricProvenance?.model
+    && leftLyricProvenance?.method === rightLyricProvenance?.method
+    && leftLyricProvenance?.coverage === rightLyricProvenance?.coverage
+    && leftLyricProvenance?.median_confidence === rightLyricProvenance?.median_confidence
+    && leftLyricProvenance?.confidence_score === rightLyricProvenance?.confidence_score
+    && leftLyricProvenance?.verified_words === rightLyricProvenance?.verified_words
+    && leftLyricProvenance?.review_words === rightLyricProvenance?.review_words
+    && leftLyricProvenance?.corrected_words === rightLyricProvenance?.corrected_words
+    && leftLyricProvenance?.review_lines === rightLyricProvenance?.review_lines
+    && leftLyricProvenance?.agreement_within_0_25 === rightLyricProvenance?.agreement_within_0_25
+    && leftLyricProvenance?.median_agreement_seconds === rightLyricProvenance?.median_agreement_seconds
+    && leftLyricProvenance?.attribution === rightLyricProvenance?.attribution
+    && leftLyricProvenance?.confirmed_by === rightLyricProvenance?.confirmed_by
+    && leftLyricProvenance?.recorded_at === rightLyricProvenance?.recorded_at;
 }
 
 function compareTracks(left: Track, right: Track): number {

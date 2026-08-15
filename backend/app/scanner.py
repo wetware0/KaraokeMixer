@@ -10,6 +10,7 @@ import mutagen
 from .duration import read_duration_seconds
 from .instrumental_provenance import read_instrumental_provenance_tag
 from .lrc import classify_lrc_file
+from .lyrics.provenance import read_lyric_timing_provenance
 from .release_year import is_plausible_release_year
 from .tags import has_embedded_artwork
 
@@ -198,6 +199,7 @@ class TrackRecord:
     instrumental_mtime_ns: int | None = None
     instrumental_size: int | None = None
     instrumental_provenance: dict | None = None
+    lyric_timing_provenance: dict | None = None
 
 
 def iter_media_root(media_root: Path, mirror_roots: list[Path]) -> Iterator[TrackRecord]:
@@ -223,6 +225,10 @@ def iter_media_root(media_root: Path, mirror_roots: list[Path]) -> Iterator[Trac
 
         extended = read_extended_tags(path)
         outputs, lrc_state = find_outputs(path, media_root, mirror_roots)
+        lrc_path = locate_output(path, media_root, mirror_roots, ".lrc")
+        lyric_timing_provenance = (
+            read_lyric_timing_provenance(lrc_path) if lrc_path is not None else None
+        )
         instrumental_path = locate_output(path, media_root, mirror_roots, ".instrumental.mp3")
         try:
             instrumental_stat = instrumental_path.stat() if instrumental_path else None
@@ -257,6 +263,7 @@ def iter_media_root(media_root: Path, mirror_roots: list[Path]) -> Iterator[Trac
             instrumental_mtime_ns=instrumental_stat.st_mtime_ns if instrumental_stat else None,
             instrumental_size=instrumental_stat.st_size if instrumental_stat else None,
             instrumental_provenance=instrumental_provenance,
+            lyric_timing_provenance=lyric_timing_provenance,
         )
 
 

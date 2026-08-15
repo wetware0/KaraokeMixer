@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { fetchJob, fetchLrc, fetchTrackParts, partAudioUrl, saveLrc, submitJob } from "../api";
+  import { confirmLyricTimingQuality, fetchJob, fetchLrc, fetchTrackParts, partAudioUrl, saveLrc, submitJob } from "../api";
   import { createEngine, type AudioEngine, type CreateEngineOptions, type EngineAudioBuffer, type LoopRegion } from "../audio/engine";
   import { advanceFollowWindowWithLoop, centerWindow, type MarkerRef, type ViewWindow } from "../audio/markerHitTest";
   import { chooseInstrumentalInsertIndex, computeLineBands, computeTimingSelectionSpan } from "../audio/lineBands";
@@ -9,7 +9,7 @@
     insertInstrumentalLine, nudgeWordTime, parseLrc, removeInstrumentalLine, renderLrc, setLineStart, setWordTime, tapStamp,
     type LrcModel,
   } from "../lrcModel";
-  import type { LrcReadResponse, LrcState, Track } from "../types";
+  import type { LrcReadResponse, LrcState, LyricTimingReport, Track } from "../types";
   import { jobsStore } from "../jobsStore.svelte";
   import { tracksStore } from "../tracksStore.svelte";
   import { loadTapOffsetSeconds, saveTapOffsetSeconds } from "../tapOffsetStore";
@@ -70,6 +70,14 @@
   let retimeMessage = $state<string | null>(null);
   let backgroundRefreshPending = $state(false);
   let backgroundRefreshMessage = $state<string | null>(null);
+  let timingQualityOverride = $state<"review" | "high_quality" | null | undefined>(undefined);
+  const timingQuality = $derived(timingQualityOverride ?? track.lyric_timing_provenance?.quality ?? null);
+  let qualityMessage = $state<string | null>(null);
+  let timingReport = $state<LyricTimingReport | null>(null);
+  const wordConfidence = $derived.by(() => Object.fromEntries(
+    (timingReport?.words ?? []).map((word) => [`${word.line_index}:${word.word_index}`, word.confidence]),
+  ));
+  const reviewWords = $derived((timingReport?.words ?? []).filter((word) => word.status === "review"));
   let lastFollowedLine = -1;
   let destroyed = false;
 
@@ -113,6 +121,7 @@
     const lrc = preloaded ?? await fetchLrc(track.id);
     if (destroyed) return { content: "", state: lrc.state };
     controller = new LrcEditController(parseLrc(lrc.content));
+    timingReport = lrc.timing_report ?? null;
     baseline = renderLrc(controller.model);
     selected = null;
     selectedLineIndex = null;
@@ -409,6 +418,15 @@
     if (target) selectWord(target);
   }
 
+  function selectNextReviewWord(): void {
+    if (reviewWords.length === 0) return;
+    const current = selected
+      ? reviewWords.findIndex((word) => word.line_index === selected!.lineIndex && word.word_index === selected!.wordIndex)
+      : -1;
+    const next = reviewWords[(current + 1) % reviewWords.length];
+    selectWord({ lineIndex: next.line_index, wordIndex: next.word_index });
+  }
+
   function tapNext(): void {
     const model = currentModel();
     if (!model || !engine) return;
@@ -475,6 +493,9 @@
       const result = await saveLrc(track.id, rendered);
       if (result.track) tracksStore.replaceTrack(result.track);
       baseline = rendered;
+      timingReport = null;
+      timingQualityOverride = null;
+      qualityMessage = "Timing quality needs review again because the lyrics changed.";
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : String(err);
     }
@@ -488,6 +509,20 @@
     errorMessage = null;
     try {
       await saveLrc(track.id, renderLrc(model), { suffix });
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function confirmHighQualityTiming(): Promise<void> {
+    if (dirty || timingQuality === "high_quality") return;
+    if (!window.confirm("Confirm High Quality only after listening through the track and checking the word highlighting. Continue?")) return;
+    errorMessage = null;
+    try {
+      const updated = await confirmLyricTimingQuality(track.id);
+      tracksStore.replaceTrack(updated);
+      timingQualityOverride = updated.lyric_timing_provenance?.quality ?? null;
+      qualityMessage = "High Quality timing recorded for this exact LRC file. Any later lyric or timing edit will require review again.";
     } catch (err) {
       errorMessage = err instanceof Error ? err.message : String(err);
     }
@@ -544,7 +579,15 @@
 
     try {
       const latest = await fetchLrc(track.id);
-      if (destroyed || latest.content === baseline) return;
+      if (destroyed) return;
+      const contentChanged = latest.content !== baseline;
+      const reportChanged = JSON.stringify(latest.timing_report ?? null) !== JSON.stringify(timingReport);
+      if (!contentChanged && !reportChanged) return;
+      if (!contentChanged) {
+        timingReport = latest.timing_report ?? null;
+        backgroundRefreshMessage = "Lyric timing confidence refreshed after background processing completed.";
+        return;
+      }
       if (dirty) {
         backgroundRefreshPending = true;
         backgroundRefreshMessage = "Background processing produced newer lyrics. Load them when ready; your unsaved edits will be preserved until you choose.";
@@ -683,6 +726,18 @@
       {/if}
       <button onclick={save}>Save</button>
       <button onclick={saveAs}>Save As…</button>
+      {#if reviewWords.length > 0}
+        <button onclick={selectNextReviewWord}>Next review word ({reviewWords.length})</button>
+      {/if}
+      <button
+        onclick={() => void confirmHighQualityTiming()}
+        disabled={dirty || timingQuality === "high_quality" || track.lrc_state !== "enhanced"}
+        title={dirty
+          ? "Save your changes before confirming timing quality"
+          : timingQuality === "high_quality"
+            ? "This exact LRC has been listening-reviewed"
+            : "Confirm only after listening through the word highlighting"}
+      >{timingQuality === "high_quality" ? "High Quality timing ✓" : "Confirm High Quality timing"}</button>
       {#if errorMessage}
         <span class="lyric-editor-save-error">{errorMessage}</span>
       {/if}
@@ -692,6 +747,15 @@
       <p class="lyric-editor-status">Enhanced per-word timing is unavailable until the WhisperX worker is installed.</p>
     {/if}
     {#if retimeMessage}<p class="lyric-editor-status" aria-live="polite">{retimeMessage}</p>{/if}
+    {#if qualityMessage}<p class="lyric-editor-status" aria-live="polite">{qualityMessage}</p>{/if}
+    {#if timingReport}
+      <p class="lyric-editor-status" aria-live="polite">
+        Confidence {timingReport.summary.confidence_score ?? 0}/100 ·
+        {timingReport.summary.verified_words ?? 0} verified ·
+        {timingReport.summary.review_words ?? 0} words in {timingReport.summary.review_lines ?? 0} lines need review ·
+        {timingReport.summary.corrected_words ?? 0} corrected
+      </p>
+    {/if}
     {#if backgroundRefreshMessage}
       <p class="lyric-editor-status" aria-live="polite">
         {backgroundRefreshMessage}
@@ -707,6 +771,7 @@
       <KaraokeDisplay
         model={currentModel()!} currentTime={currentTime} onWordClick={selectWord}
         selectedWord={selected} {selectedLineIndex} onLineClick={onSelectLine}
+        {wordConfidence}
         breakLabel="[break]" onRemoveBreak={removeInstrumentalBreak}
       />
     </div>

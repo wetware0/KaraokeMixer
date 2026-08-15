@@ -31,9 +31,15 @@ def test_delete_moves_source_and_generated_outputs_to_recycle_bin_then_removes_r
     client, track_id, source, mirror_root = _seed_track(tmp_path)
     beside_stem = source.with_name("Song.instrumental.mp3")
     beside_lrc_variant = source.with_name("Song.review.lrc")
+    timing_quality = source.with_name("Song.lyrics-quality.json")
+    timing_details = source.with_name("Song.lyrics-quality-details.json")
+    timing_backup = source.with_name("Song.before-confidence.lrc")
     mirror_lrc = mirror_root / "Song.lrc"
     unrelated = source.with_name("Other.instrumental.mp3")
-    for path in (beside_stem, beside_lrc_variant, mirror_lrc, unrelated):
+    for path in (
+        beside_stem, beside_lrc_variant, timing_quality, timing_details,
+        timing_backup, mirror_lrc, unrelated,
+    ):
         path.write_bytes(b"generated")
 
     recycled: list[Path] = []
@@ -43,7 +49,10 @@ def test_delete_moves_source_and_generated_outputs_to_recycle_bin_then_removes_r
 
     assert response.status_code == 200
     assert recycled[-1] == source
-    assert set(recycled[:-1]) == {beside_stem, beside_lrc_variant, mirror_lrc}
+    assert set(recycled[:-1]) == {
+        beside_stem, beside_lrc_variant, timing_quality, timing_details,
+        timing_backup, mirror_lrc,
+    }
     assert unrelated not in recycled
     assert client.get("/api/tracks").json()["tracks"] == []
 

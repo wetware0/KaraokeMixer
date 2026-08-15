@@ -26,6 +26,8 @@ from .events import EventBus
 from .pipeline import Stage, StageContext, StageResult, StageStatus, should_skip
 from .recipes import REGISTRY, RecipeDefinition
 from .scanner import find_outputs, read_extended_tags
+from .scanner import locate_output
+from .lyrics.provenance import read_lyric_timing_provenance
 from .workers.runner import PersistentWorkerPool
 
 log = logging.getLogger(__name__)
@@ -498,8 +500,15 @@ class JobQueueManager:
             return
         source_path = Path(item["source_path"])
         mirror_roots = [Path(root) for root in options.get("mirror_roots", [])]
-        outputs, lrc_state = find_outputs(source_path, Path(track["media_root"]), mirror_roots)
-        updated = update_track_outputs(self._conn, track_id, outputs, lrc_state)
+        media_root = Path(track["media_root"])
+        outputs, lrc_state = find_outputs(source_path, media_root, mirror_roots)
+        lrc_path = locate_output(source_path, media_root, mirror_roots, ".lrc")
+        lyric_timing_provenance = (
+            read_lyric_timing_provenance(lrc_path) if lrc_path is not None else None
+        )
+        updated = update_track_outputs(
+            self._conn, track_id, outputs, lrc_state, lyric_timing_provenance
+        )
         if updated is None:
             return
         self._event_bus.publish(

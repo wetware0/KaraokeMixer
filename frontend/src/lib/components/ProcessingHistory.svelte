@@ -14,6 +14,7 @@
     fetch_tags: "Tags and artwork",
     full_prep: "Complete karaoke preparation",
     align_only: "Re-time lyrics with AI",
+    improve_lyrics: "Improve lyric timing",
     youtube_import: "YouTube import",
   };
   const STAGE_LABELS: Record<string, string> = {
@@ -21,6 +22,7 @@
     karaoke_instrumental: "Create karaoke instrumental",
     fetch_lyrics: "Download lyrics",
     align_lyrics: "Enhance lyric timing",
+    improve_lyrics: "Improve lyric timing confidence",
     fetch_tags: "Update tags and artwork",
     uvr_vocal_split: "Separate lead/backing vocals",
     youtube_import: "Download track",

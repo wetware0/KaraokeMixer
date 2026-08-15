@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { artworkUrl, audioUrl, browseForFolder, cancelJob, createLibraryFolder, deleteLibraryFolder, deleteTrack, fetchJob, fetchJobHistory, fetchJobItems, fetchJobs, fetchLibraryFolders, fetchLrc, fetchRecipes, fetchRescanStatus, fetchSettings, fetchSystem, fetchTagSuggestion, fetchTrackFailures, fetchTracks, fetchTrackParts, importFromYoutube, moveTrack, partAudioUrl, probeYoutube, reconcileTrackLyrics, renameLibraryFolder, rescan, saveLrc, saveTrackTags, submitJob, updateSettings, uploadTrackArtwork } from "./api";
+import { artworkUrl, audioUrl, browseForFolder, cancelJob, confirmLyricTimingQuality, createLibraryFolder, deleteLibraryFolder, deleteTrack, fetchJob, fetchJobHistory, fetchJobItems, fetchJobs, fetchLibraryFolders, fetchLrc, fetchRecipes, fetchRescanStatus, fetchSettings, fetchSystem, fetchTagSuggestion, fetchTrackFailures, fetchTracks, fetchTrackParts, importFromYoutube, moveTrack, partAudioUrl, probeYoutube, reconcileTrackLyrics, renameLibraryFolder, rescan, saveLrc, saveTrackTags, submitJob, updateSettings, uploadTrackArtwork } from "./api";
 import type { JobDetail, JobSummary, LibraryFolder, RecipeInfo, Settings, Track, YoutubeImportRequest, YoutubeProbeResult } from "./types";
 
 afterEach(() => {
@@ -53,6 +53,21 @@ describe("reconcileTrackLyrics", () => {
       body: JSON.stringify({ track_ids: [7, 8] }),
     });
     expect(result).toEqual(changed);
+  });
+});
+
+describe("confirmLyricTimingQuality", () => {
+  it("records a listening review for the exact canonical LRC", async () => {
+    const updated = { id: 7, lrc_state: "enhanced" } as Track;
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(updated));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(confirmLyricTimingQuality(7)).resolves.toEqual(updated);
+    expect(fetchMock).toHaveBeenCalledWith("/api/tracks/7/lrc/confirm-quality", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmed_by: "user" }),
+    });
   });
 });
 

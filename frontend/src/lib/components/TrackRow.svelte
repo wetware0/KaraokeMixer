@@ -1,6 +1,6 @@
 <script lang="ts">
   import { artworkUrl } from "../api";
-  import { displayValue, instrumentalProvenanceTitle, type LibraryColumnConfig } from "../libraryColumns";
+  import { displayValue, instrumentalProvenanceTitle, lyricTimingTitle, type LibraryColumnConfig } from "../libraryColumns";
   import type { Track } from "../types";
   import CreateLyricsDialog from "./CreateLyricsDialog.svelte";
 
@@ -192,14 +192,18 @@
       <td
         class="track-row-cell track-row-cell-{column.key}"
         style={`width: ${column.width}px; min-width: ${column.width}px; max-width: ${column.width}px;`}
-        title={column.key === "instrumental" ? instrumentalProvenanceTitle(track) : displayValue(track, column.key)}
+        title={column.key === "instrumental"
+          ? instrumentalProvenanceTitle(track)
+          : column.key === "lyrics"
+            ? lyricTimingTitle(track)
+            : displayValue(track, column.key)}
       >
         {#if column.key === "instrumental"}
           <span class="badge" class:badge-instrumental={track.outputs.instrumental} class:badge-output-missing={!track.outputs.instrumental}>
             {displayValue(track, column.key)}
           </span>
         {:else if column.key === "lyrics"}
-          <span class="badge" class:badge-output-missing={!track.lrc_state} class:badge-lrc-enhanced={track.lrc_state === "enhanced"} class:badge-lrc-line_timed={track.lrc_state === "line_timed"} class:badge-lrc-untimed={track.lrc_state === "untimed"} class:badge-lrc-empty={track.lrc_state === "empty"} class:badge-lrc-unknown={track.lrc_state === "unknown"}>
+          <span class="badge" class:badge-output-missing={!track.lrc_state} class:badge-lyrics-high-quality={track.lyric_timing_provenance?.quality === "high_quality"} class:badge-lrc-enhanced={track.lrc_state === "enhanced" && track.lyric_timing_provenance?.quality !== "high_quality"} class:badge-lrc-line_timed={track.lrc_state === "line_timed"} class:badge-lrc-untimed={track.lrc_state === "untimed"} class:badge-lrc-empty={track.lrc_state === "empty"} class:badge-lrc-unknown={track.lrc_state === "unknown"}>
             {displayValue(track, column.key)}
           </span>
         {:else if column.key === "stems"}

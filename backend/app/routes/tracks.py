@@ -41,6 +41,12 @@ from ..media_moves import (
 )
 from ..metadata.providers import DEFAULT_TAGS_PROVIDERS, download_artwork, search_tags_providers
 from ..lyrics.paths import resolve_lrc_path
+from ..lyrics.provenance import (
+    confirm_lyric_timing_quality as confirm_lyric_timing_quality_file,
+    read_lyric_timing_provenance,
+    read_lyric_timing_report,
+    remove_lyric_timing_provenance,
+)
 from ..pipeline import atomic_publish
 from ..release_year import MIN_RELEASE_YEAR, is_plausible_release_year
 from ..scanner import PART_NAMES, locate_output, read_extended_tags
@@ -104,9 +110,14 @@ def reconcile_track_lyrics(payload: ReconcileTrackLyricsPayload, request: Reques
         source_path = Path(track["absolute_path"])
         located = locate_output(source_path, Path(track["media_root"]), mirror_roots, ".lrc")
         live_state = classify_lrc_file(located).value if located is not None else None
-        if track["lrc_state"] == live_state and track["outputs"]["lrc"] == (located is not None):
+        live_provenance = read_lyric_timing_provenance(located) if located is not None else None
+        if (
+            track["lrc_state"] == live_state
+            and track["outputs"]["lrc"] == (located is not None)
+            and track.get("lyric_timing_provenance") == live_provenance
+        ):
             continue
-        updated = update_track_lrc_state(conn, track_id, live_state)
+        updated = update_track_lrc_state(conn, track_id, live_state, live_provenance)
         if updated is not None:
             changed.append(updated)
     return {"tracks": changed}
@@ -461,11 +472,16 @@ def read_track_lrc(track_id: int, request: Request) -> dict:
     mirror_roots = [Path(root) for root in settings["mirror_roots"]]
     located = locate_output(source_path, Path(track["media_root"]), mirror_roots, ".lrc")
     if located is None:
-        return {"exists": False, "content": "", "state": None}
+        return {"exists": False, "content": "", "state": None, "timing_report": None}
 
     content = read_lrc_text(located)
     state = LrcDocument.parse(content).state
-    return {"exists": True, "content": content, "state": state.value}
+    return {
+        "exists": True,
+        "content": content,
+        "state": state.value,
+        "timing_report": read_lyric_timing_report(located),
+    }
 
 
 class LrcWritePayload(BaseModel):
@@ -515,6 +531,11 @@ def write_track_lrc(
         # same critical section. Otherwise two concurrent saves could leave
         # the row describing the first payload after the second won the file.
         if suffix is None:
+            # Any canonical edit invalidates a previous timing review. The
+            # hash-bound record would be ignored on the next scan anyway, but
+            # deleting it and clearing SQLite here keeps the open Library
+            # truthful immediately.
+            remove_lyric_timing_provenance(target_path)
             lrc_state = LrcDocument.parse(payload.content).state.value
             updated_track = update_track_lrc_state(conn, track_id, lrc_state)
 
@@ -526,6 +547,49 @@ def write_track_lrc(
     if updated_track is not None:
         response["track"] = updated_track
     return response
+
+
+class ConfirmLyricTimingQualityPayload(BaseModel):
+    confirmed_by: str = "user"
+
+
+@router.post("/api/tracks/{track_id}/lrc/confirm-quality")
+def confirm_track_lyric_timing_quality(
+    track_id: int,
+    payload: ConfirmLyricTimingQualityPayload,
+    request: Request,
+) -> dict:
+    conn = request.app.state.db_conn
+    track = get_track(conn, track_id)
+    if track is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+    if track_has_active_job(conn, track_id):
+        raise HTTPException(status_code=409, detail="Wait for track processing to finish before confirming timing")
+    confirmed_by = payload.confirmed_by.strip()
+    if not confirmed_by or len(confirmed_by) > 200:
+        raise HTTPException(status_code=422, detail="confirmed_by must contain 1 to 200 characters")
+
+    settings = get_settings(conn)
+    source_path = Path(track["absolute_path"])
+    lrc_path = locate_output(
+        source_path,
+        Path(track["media_root"]),
+        [Path(root) for root in settings["mirror_roots"]],
+        ".lrc",
+    )
+    if lrc_path is None:
+        raise HTTPException(status_code=409, detail="No canonical LRC exists for this track")
+    with _lrc_write_lock:
+        # Re-check inside the same lock used by canonical saves. Otherwise a
+        # concurrent save could replace an enhanced file after this endpoint
+        # classified it but before the hash-bound confirmation was written.
+        if classify_lrc_file(lrc_path).value != "enhanced":
+            raise HTTPException(status_code=409, detail="Only enhanced per-word timing can be confirmed High Quality")
+        provenance = confirm_lyric_timing_quality_file(lrc_path, confirmed_by)
+        updated = update_track_lrc_state(conn, track_id, "enhanced", provenance)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+    return updated
 
 
 @router.get("/api/tracks/{track_id}/artwork")

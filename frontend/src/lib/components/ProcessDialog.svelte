@@ -25,6 +25,7 @@
     lyrics_only: { label: "Lyrics and enhanced timing", description: "Find lyrics and create a fresh timestamp for every word without separating audio." },
     fetch_tags: { label: "Tags and artwork", description: "Look up missing artist, title, album, year and cover art." },
     full_prep: { label: "Complete karaoke preparation", description: "Create stems, fetch metadata and prepare timed lyrics in one job." },
+    improve_lyrics: { label: "Improve lyric timing", description: "Compare the original mix with its vocal residual, correct supported word timings and flag only uncertain words." },
   };
   const optionLabels: Record<string, string> = {
     processing_profile: "Processing profile",

@@ -517,6 +517,11 @@ body,
   color: var(--badge-lrc-enhanced-text);
 }
 
+.badge-lyrics-high-quality {
+  background: var(--badge-instrumental);
+  color: var(--badge-instrumental-text);
+}
+
 .badge-lrc-line_timed {
   background: var(--badge-lrc-line_timed);
   color: var(--badge-lrc-line_timed-text);
@@ -1708,6 +1713,16 @@ body,
 .karaoke-word-selected {
   background: var(--selection-word-bg);
   color: var(--text);
+}
+
+.karaoke-word-review {
+  background: color-mix(in srgb, var(--badge-lrc-enhanced) 72%, transparent);
+  box-shadow: inset 0 -2px color-mix(in srgb, var(--badge-lrc-enhanced-text) 62%, transparent);
+}
+
+.karaoke-word-review:hover,
+.karaoke-word-review.karaoke-word-selected {
+  background: color-mix(in srgb, var(--badge-lrc-enhanced) 82%, var(--bg-panel));
 }
 
 .karaoke-word-active.karaoke-word-selected {

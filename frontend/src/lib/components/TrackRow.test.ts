@@ -149,7 +149,7 @@ describe("TrackRow", () => {
     });
 
     expect(screen.getByText("Ready")).toBeTruthy();
-    expect(screen.getByText("Enhanced")).toBeTruthy();
+    expect(screen.getByText("Needs review")).toBeTruthy();
     expect(screen.getByText("1 stem")).toBeTruthy();
   });
 

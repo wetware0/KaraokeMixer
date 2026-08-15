@@ -404,6 +404,19 @@ The Library is the main creator workspace.
   recorded at creation time or inferred from processing history. An existing
   instrumental whose provenance cannot be proved remains **Ready**; it is not
   mislabeled as low quality. **Missing** means no instrumental is present.
+- Lyrics reports **High Quality** only after an enhanced, per-word LRC has been
+  listened through and explicitly confirmed in the Lyric Editor. Enhanced
+  files without a valid confirmation show **Needs review**. The confirmation
+  is bound to the exact LRC contents and is automatically invalidated by any
+  later lyric or timing edit.
+- After **Improve lyric timing**, Lyrics reports `Review N/100`. This score is
+  dual-audio evidence, not a probability. Hover for verified/corrected/review
+  counts; filter **Confidence checked** or **Not confidence checked** to build
+  a batch. See [Automatic lyric timing improvement](docs/LYRIC_TIMING_CONFIDENCE.md).
+- To find incomplete final-quality tracks, combine the heading filters
+  **Instrumental: High Quality** and **Lyrics: Needs review**. This is the
+  remediation queue for tracks whose separation is final but whose lyric
+  timing is not yet certified.
 - Artist reads the contributing-artist tag first, preserving multiple values,
   and falls back to Album Artist.
 - Duration is read from the original file without a full audio decode.
@@ -468,6 +481,7 @@ workflow's default.
 | **Lyrics and enhanced timing** | LRC download plus optional full per-word timing | GPU queue; WhisperX runs only when alignment is requested |
 | **Tags and artwork** | Missing/replacement metadata and embedded cover art | CPU |
 | **Complete karaoke preparation** | Stems, instrumental, lyrics/timing, tags, and artwork | GPU |
+| **Improve lyric timing** | Conservatively repair an enhanced LRC from original-mix and vocal-residual agreement | GPU |
 
 The CPU and GPU queues are independent, with one job running in each lane. A
 metadata job can therefore run alongside a separation job. Compatible models
@@ -613,6 +627,19 @@ The editor chooses the best available review source in this order:
 - **Re-time every word with AI** discards every existing line, break, and word
   marker and rebuilds an enhanced LRC for the complete song. Save or undo
   manual changes first.
+- **Improve lyric timing** is available from the Library's Process dialog for
+  conservative bulk repair. It keeps uncertain markers, corrects supported or
+  clearly wrong same-direction markers, saves a one-time
+  `.before-confidence.lrc` backup, and records per-word review evidence.
+- After that workflow, pale amber words still need review. **Next review word**
+  jumps between them without stepping through the whole song.
+- AI timing must acoustically match at least 80% of the supplied lyric words.
+  Below that threshold the job fails clearly and the existing LRC is left
+  unchanged; interpolated markers are not allowed to disguise a poor match.
+- An automatic result is always **Needs review**, even when every word receives
+  a marker. Listen through the highlighting, correct any errors, then choose
+  **Confirm High Quality timing**. This writes a portable
+  `{track}.lyrics-quality.json` record beside the canonical LRC.
 - **Save** atomically replaces the canonical `.lrc`.
 - **Save As…** writes `{name}.{suffix}.lrc` without replacing the canonical
   file.

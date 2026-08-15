@@ -25,6 +25,8 @@ def related_output_paths(source_path: Path, media_root: Path, mirror_roots: list
     for directory in directories:
         candidates.extend(directory / f"{source_path.stem}.{part}.mp3" for part in PART_NAMES)
         candidates.append(directory / f"{source_path.stem}.lrc")
+        candidates.append(directory / f"{source_path.stem}.lyrics-quality.json")
+        candidates.append(directory / f"{source_path.stem}.lyrics-quality-details.json")
         if directory.is_dir():
             # Avoid globbing with the source stem itself: valid music names
             # can contain ``[``, ``]`` or ``*``, which have wildcard meaning

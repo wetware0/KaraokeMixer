@@ -20,6 +20,11 @@ concurrency:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
+    # GitHub code scanning is available automatically for the sanitized public
+    # repository, but not for the retained private archive on the current plan.
+    # Keeping the workflow here lets public snapshots inherit it without making
+    # every private-source push fail during SARIF upload.
+    if: github.event.repository.visibility == 'public'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

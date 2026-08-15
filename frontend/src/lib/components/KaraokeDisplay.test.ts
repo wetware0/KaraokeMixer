@@ -38,6 +38,17 @@ describe("KaraokeDisplay", () => {
     expect(screen.getByText("there").closest(".karaoke-line")?.className).toContain("karaoke-line-selected");
   });
 
+  it("softly marks only words whose timing evidence needs review", () => {
+    const model = parseLrc("Hi there\n");
+    render(KaraokeDisplay, {
+      props: { model, currentTime: 0, wordConfidence: { "0:0": 42, "0:1": 91 } },
+    });
+
+    expect(screen.getByText("Hi").className).toContain("karaoke-word-review");
+    expect(screen.getByText("Hi").getAttribute("title")).toBe("Timing confidence 42/100");
+    expect(screen.getByText("there").className).not.toContain("karaoke-word-review");
+  });
+
   it("highlights the active whole line when only line timestamps exist", () => {
     const model = parseLrc("[00:01.00]First line\n[00:05.00]Second line\n");
     render(KaraokeDisplay, { props: { model, currentTime: 5.5 } });

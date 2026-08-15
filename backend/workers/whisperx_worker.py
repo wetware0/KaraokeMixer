@@ -60,6 +60,10 @@ def _run_request(args: dict, whisperx, cache: dict) -> None:
 
     _emit({"type": "progress", "message": "decoding audio"})
     audio = whisperx.load_audio(args["audio_path"])
+    if args.get("normalize_audio"):
+        peak = float(abs(audio).max()) if len(audio) else 0.0
+        if peak > 0:
+            audio = audio * (0.95 / peak)
 
     if mode == "align":
         segments = args["segments"]

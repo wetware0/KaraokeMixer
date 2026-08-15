@@ -40,7 +40,9 @@
   onMount(async () => {
     dialogEl?.focus();
     try {
-      recipes = await fetchRecipes();
+      // Improve timing requires an existing enhanced LRC and instrumental,
+      // neither of which a just-downloaded source has yet.
+      recipes = (await fetchRecipes()).filter((candidate) => candidate.name !== "improve_lyrics");
       if (recipes.length > 0) selectedRecipe = recipes[0].name;
     } catch {
       // Recipe discovery is optional for a download-only import.

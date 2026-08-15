@@ -1,6 +1,3 @@
-import queue as queue_module
-
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -137,8 +134,7 @@ def test_import_route_keeps_an_explicit_chained_device_choice(tmp_path, monkeypa
 
 
 def test_import_route_rejects_an_invalid_chained_option_before_submitting_the_import_job(tmp_path, monkeypatch):
-    app, client = _client_with_downloads_root(tmp_path, monkeypatch)
-    subscriber = app.state.event_bus.subscribe()
+    _app, client = _client_with_downloads_root(tmp_path, monkeypatch)
 
     response = client.post(
         "/api/youtube/import",
@@ -149,11 +145,11 @@ def test_import_route_rejects_an_invalid_chained_option_before_submitting_the_im
     )
 
     assert response.status_code == 422
-    # And the import job itself must never have been submitted at all - a
-    # bad chained option 422s upfront, before any job (let alone a youtube
-    # download) is started.
-    with pytest.raises(queue_module.Empty):
-        subscriber.get(timeout=0.2)
+    # And the import job itself must never have been submitted at all. Inspect
+    # the durable job list directly: the event bus can legitimately receive a
+    # late background-rescan event on a slower Windows CI runner, which says
+    # nothing about whether this route created a download job.
+    assert client.get("/api/jobs").json()["jobs"] == []
 
 
 def test_import_route_rejects_an_unknown_chained_recipe(tmp_path, monkeypatch):
