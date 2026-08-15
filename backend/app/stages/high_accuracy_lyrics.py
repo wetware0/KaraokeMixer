@@ -101,11 +101,11 @@ class PrepareVocalReferenceStage:
                     cancel_event=ctx.cancel_event,
                     on_progress=ctx.on_progress,
                 )
-                # The destination is a SHA-256 filename below the fixed
-                # application temp root; the worker output is below raw_temp.
-                # codeql[py/path-injection]
                 atomic_publish(
                     destination,
+                    # The destination is a SHA-256 filename below the fixed
+                    # application temp root; this worker output is below raw_temp.
+                    # codeql[py/path-injection]
                     lambda part: shutil.copyfile(outputs["vocals"], part),
                 )
         except (OSError, ValueError, RuntimeError) as exc:
@@ -253,13 +253,16 @@ class HighAccuracyLyricsStage:
         try:
             if timing.corrected_words or improved != content:
                 if not backup_path.exists():
-                    # lrc_path was validated below a configured media root.
-                    # codeql[py/path-injection]
-                    atomic_publish(backup_path, lambda part: part.write_bytes(initial_lrc_bytes))
-                # lrc_path was validated below a configured media root.
-                # codeql[py/path-injection]
+                    atomic_publish(
+                        backup_path,
+                        # lrc_path was validated below a configured media root.
+                        # codeql[py/path-injection]
+                        lambda part: part.write_bytes(initial_lrc_bytes),
+                    )
                 atomic_publish(
                     lrc_path,
+                    # lrc_path was validated below a configured media root.
+                    # codeql[py/path-injection]
                     lambda part: part.write_text(improved, encoding="utf-8", newline=""),
                 )
             summary = write_lyric_timing_report(lrc_path, {
